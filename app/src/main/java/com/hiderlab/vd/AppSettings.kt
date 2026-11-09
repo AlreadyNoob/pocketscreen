@@ -14,6 +14,10 @@ object AppSettings {
     fun backGesture(c: Context): Boolean = p(c).getBoolean("back_gesture", true)
     fun setBackGesture(c: Context, on: Boolean) { p(c).edit().putBoolean("back_gesture", on).apply() }
 
+    /** Launch apps with "exclude from Recents" so they don't show there while on a hidden display. On by default. */
+    fun hideFromRecents(c: Context): Boolean = p(c).getBoolean("hide_recents", true)
+    fun setHideFromRecents(c: Context, on: Boolean) { p(c).edit().putBoolean("hide_recents", on).apply() }
+
     /** On Android 12+, use the system (wallpaper) colors. On by default. */
     fun dynamicColor(c: Context): Boolean = p(c).getBoolean("dynamic_color", true)
     fun setDynamicColor(c: Context, on: Boolean) { p(c).edit().putBoolean("dynamic_color", on).apply() }

@@ -1019,6 +1019,9 @@ class MainActivity : Activity() {
                 settingsToggle("Back gesture controls the app", "On: back in the viewer goes back inside the app. Off: back does nothing.", AppSettings.backGesture(this)) {
                     AppSettings.setBackGesture(this, it)
                 },
+                settingsToggle("Hide apps from Recents", "Apps you launch won't appear in Recents while running here. Applies to the next launch. An app launched this way may not show in Recents after \"Close display\" either.", AppSettings.hideFromRecents(this)) {
+                    AppSettings.setHideFromRecents(this, it)
+                },
                 settingsToggle("Suppress keyboard requests", "Keyboard only opens from the keyboard icon in the viewer.", AppSettings.suppressKeyboard(this)) {
                     AppSettings.setSuppressKeyboard(this, it)
                 }

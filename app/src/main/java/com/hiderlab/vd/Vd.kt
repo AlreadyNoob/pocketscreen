@@ -381,8 +381,9 @@ object Vd {
             if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
-        // -f = NEW_TASK. The task is not excluded from Recents, so it stays there after its display is closed.
-        return exec("am start --display $display -f $LAUNCH_FLAGS -n $comp")
+        // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off in Settings.
+        val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 else LAUNCH_FLAGS // 0x00800000 = EXCLUDE_FROM_RECENTS
+        return exec("am start --display $display -f $flags -n $comp")
     }
 
     private fun stopHostIfIdle(ctx: Context) {
