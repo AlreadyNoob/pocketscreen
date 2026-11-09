@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// CI sets GITHUB_RUN_NUMBER, so every build gets a higher versionCode and installs over the last one.
 val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
 android {
@@ -13,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = runNumber
-        versionName = "0.8.$runNumber"
+        versionName = "${project.property("appVersion")}.$runNumber"
     }
     // Fixed signing key, so every build has the same signature and installs over the old one.
     signingConfigs {
