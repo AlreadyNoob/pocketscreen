@@ -31,17 +31,23 @@ import java.io.File
 class MainActivity : Activity() {
 
     private lateinit var chipsRow: LinearLayout
+    private lateinit var setupCard: LinearLayout
     private lateinit var helperView: TextView
     private lateinit var btnGrant: View
     private lateinit var btnConnect: View
     private lateinit var btnLaunch: View
-    private lateinit var btnStopAll: View
+    private lateinit var moreBtn: IconView
     private lateinit var displaysBox: LinearLayout
     private lateinit var tasksBox: LinearLayout
-    private lateinit var diagBody: LinearLayout
-    private lateinit var diagToggle: TextView
-    private lateinit var logCard: LinearLayout
-    private lateinit var logView: TextView
+
+    private val logBuf = StringBuilder()
+    private var logTv: TextView? = null
+    private var logScroll: ScrollView? = null
+    private var logHeader: View? = null
+
+    private val versionName: String by lazy {
+        try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (_: Throwable) { "" }
+    }
 
     private val refreshRunnable = Runnable { runOnUiThread { refresh() } }
 
@@ -71,101 +77,51 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(20), dp(24), dp(20), dp(32))
+        root.setPadding(dp(20), dp(8), dp(20), dp(40))
         scroll.addView(root)
         setContentView(scroll)
 
-        // header
-        root.addView(Ui.text(this, "Hider Lab", 30f, Ui.TEXT, bold = true))
-        Ui.add(root, Ui.text(this, "Keep apps running, out of sight.", 14f, Ui.MUTED), top = 2)
+        // header: title, overflow menu, status chips
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        head.addView(Ui.text(this, "Hider Lab", 28f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        moreBtn = IconView(this, IconView.MORE)
+        moreBtn.setOnClickListener { showMainMenu() }
+        val mlp = LinearLayout.LayoutParams(-2, -2)
+        mlp.rightMargin = -dp(12)
+        head.addView(moreBtn, mlp)
+        root.addView(head)
 
-        // status
-        val status = Ui.card(this)
         chipsRow = LinearLayout(this)
         chipsRow.orientation = LinearLayout.HORIZONTAL
-        status.addView(chipsRow)
-        helperView = Ui.text(this, "", 13f, Ui.MUTED)
-        Ui.add(status, helperView, top = 10)
+        Ui.add(root, chipsRow, top = 4)
+
+        // setup card: only shown while something still needs doing
+        setupCard = Ui.card(this)
+        helperView = Ui.text(this, "", 14f, Ui.TEXT)
+        setupCard.addView(helperView)
         btnGrant = Ui.button(this, "Grant Shizuku permission", Ui.Kind.FILLED) { grant() }
-        Ui.add(status, btnGrant, top = 12)
+        Ui.add(setupCard, btnGrant, top = 12)
         btnConnect = Ui.button(this, "Connect service", Ui.Kind.FILLED) { Vd.connect(applicationContext, force = true) }
-        Ui.add(status, btnConnect, top = 12)
-        Ui.add(root, status, top = 20)
+        Ui.add(setupCard, btnConnect, top = 12)
+        Ui.add(root, setupCard, top = 16)
 
         // launch
         btnLaunch = Ui.button(this, "＋  Launch app", Ui.Kind.FILLED) { pickApp() }
-        Ui.add(root, btnLaunch, top = 14)
+        Ui.add(root, btnLaunch, top = 18)
 
         // displays
         addSection(root, "Hidden displays", null)
         displaysBox = LinearLayout(this)
         displaysBox.orientation = LinearLayout.VERTICAL
-        Ui.add(root, displaysBox, top = 8)
+        Ui.add(root, displaysBox, top = 2)
 
         // apps
-        addSection(root, "Running apps", Ui.button(this, "Refresh", Ui.Kind.TEXT) { refreshTasks() })
+        addSection(root, "Running apps", null)
         tasksBox = LinearLayout(this)
         tasksBox.orientation = LinearLayout.VERTICAL
-        Ui.add(root, tasksBox, top = 8)
-
-        btnStopAll = Ui.button(this, "Stop all apps and destroy all displays", Ui.Kind.DANGER) {
-            bg { Vd.stopAll(applicationContext) }
-        }
-        Ui.add(root, btnStopAll, top = 16)
-
-        // log (only visible once something was logged)
-        logCard = Ui.card(this)
-        logView = Ui.text(this, "", 12f, Ui.MUTED)
-        logView.typeface = android.graphics.Typeface.MONOSPACE
-        logView.setTextIsSelectable(true)
-        logCard.addView(logView)
-        Ui.add(logCard, Ui.button(this, "Clear", Ui.Kind.TEXT) {
-            logView.text = ""
-            logCard.visibility = View.GONE
-        }, top = 6, w = ViewGroup.LayoutParams.WRAP_CONTENT)
-        logCard.visibility = View.GONE
-        Ui.add(root, logCard, top = 20)
-
-        // diagnostics (collapsed)
-        val diagHeader = LinearLayout(this)
-        diagHeader.orientation = LinearLayout.HORIZONTAL
-        diagHeader.gravity = Gravity.CENTER_VERTICAL
-        diagHeader.setPadding(0, dp(8), 0, dp(8))
-        diagHeader.isClickable = true
-        diagHeader.addView(Ui.text(this, "Diagnostics", 13f, Ui.MUTED, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
-        diagToggle = Ui.text(this, "Show", 13f, Ui.ACCENT)
-        diagHeader.addView(diagToggle)
-        diagBody = LinearLayout(this)
-        diagBody.orientation = LinearLayout.VERTICAL
-        diagBody.visibility = View.GONE
-        diagHeader.setOnClickListener {
-            val open = diagBody.visibility != View.VISIBLE
-            diagBody.visibility = if (open) View.VISIBLE else View.GONE
-            diagToggle.text = if (open) "Hide" else "Show"
-        }
-        Ui.add(root, diagHeader, top = 20)
-        Ui.add(root, diagBody, top = 4)
-        fun diag(label: String, action: () -> Unit) {
-            Ui.add(diagBody, Ui.button(this, label, Ui.Kind.TONAL) { action() }, top = 8)
-        }
-        diag("Heartbeat test on first hidden display") { heartbeatOn(Vd.displays.firstOrNull()?.id ?: -1) }
-        diag("Heartbeat control on main display") { heartbeatOn(0) }
-        diag("Check heartbeat result") { log(analyze()) }
-        diag("Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
-        diag("Show where apps are") {
-            bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
-        }
-        diag("Show Recents entries") {
-            bg { log(Vd.exec("dumpsys activity recents | grep -E 'Recent #|baseIntent|flg=' | head -40")) }
-        }
-        diag("Show Hiber log for Hider Lab") {
-            bg { log(Vd.exec("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")) }
-        }
-
-        val version = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Throwable) { "" }
-        val v = Ui.text(this, "Hider Lab $version", 11f, Ui.MUTED)
-        v.gravity = Gravity.CENTER
-        Ui.add(root, v, top = 24)
+        Ui.add(root, tasksBox, top = 2)
 
         // Load the app list and icons in the background now, so the picker opens instantly later.
         Apps.load(applicationContext)
@@ -197,7 +153,7 @@ class MainActivity : Activity() {
         row.gravity = Gravity.CENTER_VERTICAL
         row.addView(Ui.text(this, title, 17f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
         if (trailing != null) row.addView(trailing)
-        Ui.add(parent, row, top = 28)
+        Ui.add(parent, row, top = 26)
     }
 
     override fun onResume() {
@@ -216,9 +172,18 @@ class MainActivity : Activity() {
     }
 
     private fun log(s: String) = runOnUiThread {
-        if (::logView.isInitialized) {
-            logView.text = "$s\n\n${logView.text}".take(8000)
-            logCard.visibility = View.VISIBLE
+        val t = "$s\n\n$logBuf".take(8000)
+        logBuf.setLength(0)
+        logBuf.append(t)
+        val tv = logTv
+        if (tv != null) {
+            tv.text = t
+            // Bring the fresh output into view if the sheet is open.
+            val sc = logScroll
+            val h = logHeader
+            if (sc != null && h != null) sc.post { sc.smoothScrollTo(0, h.top) }
+        } else if (::moreBtn.isInitialized) {
+            moreBtn.badge = true
         }
     }
 
@@ -239,11 +204,11 @@ class MainActivity : Activity() {
 
         chipsRow.removeAllViews()
         val chips = listOf(
-            Triple("Shizuku", if (ping) Ui.OK else Ui.BAD, 0),
-            Triple("Permission", if (perm) Ui.OK else if (ping) Ui.WARN else Ui.BAD, 1),
-            Triple("Service", if (connected) Ui.OK else if (perm) Ui.WARN else Ui.BAD, 2)
+            "Shizuku" to (if (ping) Ui.OK else Ui.BAD),
+            "Permission" to (if (perm) Ui.OK else if (ping) Ui.WARN else Ui.BAD),
+            "Service" to (if (connected) Ui.OK else if (perm) Ui.WARN else Ui.BAD)
         )
-        for ((label, color, _) in chips) {
+        for ((label, color) in chips) {
             val lp = LinearLayout.LayoutParams(-2, -2)
             lp.rightMargin = dp(8)
             chipsRow.addView(Ui.chip(this, color, label), lp)
@@ -252,15 +217,12 @@ class MainActivity : Activity() {
         helperView.text = when {
             !ping -> "Shizuku isn't running. Start it from wireless debugging, then come back."
             !perm -> "Allow Hider Lab in Shizuku to continue."
-            !connected -> "Connecting to the service…"
-            disp.isEmpty() -> "Ready. Launch an app and a hidden display is created for it."
-            else -> "Ready. ${disp.size} hidden display${if (disp.size == 1) "" else "s"} running."
+            else -> "Connecting to the service…"
         }
-
+        setupCard.visibility = if (connected) View.GONE else View.VISIBLE
         btnGrant.visibility = if (ping && !perm) View.VISIBLE else View.GONE
         btnConnect.visibility = if (perm && !connected) View.VISIBLE else View.GONE
         btnLaunch.visibility = if (connected) View.VISIBLE else View.GONE
-        btnStopAll.visibility = if (connected && disp.isNotEmpty()) View.VISIBLE else View.GONE
         renderDisplays(disp)
         refreshTasks()
     }
@@ -289,32 +251,32 @@ class MainActivity : Activity() {
             return
         }
         for (d in list) {
-            val card = Ui.card(this)
-            val top = LinearLayout(this)
-            top.orientation = LinearLayout.HORIZONTAL
-            top.gravity = Gravity.CENTER_VERTICAL
-            top.addView(PhoneIcon(this, d.landscape, Ui.ACCENT))
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(dp(14), dp(6), dp(4), dp(6))
+            row.background = Ui.surface(this, clickable = true)
+            row.setOnClickListener { openViewer(d.id) }
+
+            row.addView(PhoneIcon(this, d.landscape, Ui.ACCENT))
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
             col.addView(Ui.text(this, "Display #${d.id}", 16f, Ui.TEXT, bold = true))
             col.addView(Ui.text(this, "${if (d.landscape) "Landscape" else "Portrait"} · ${d.w}×${d.h}", 12f, Ui.MUTED))
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(8)
-            top.addView(col, cp)
-            card.addView(top)
+            row.addView(col, cp)
 
-            val btns = LinearLayout(this)
-            btns.orientation = LinearLayout.HORIZONTAL
-            btns.gravity = Gravity.CENTER_VERTICAL
-            btns.addView(Ui.button(this, "Open viewer", Ui.Kind.TONAL) { openViewer(d.id) },
-                LinearLayout.LayoutParams(0, -2, 1f))
-            val dl = LinearLayout.LayoutParams(-2, -2)
-            dl.leftMargin = dp(8)
-            btns.addView(Ui.button(this, "Destroy", Ui.Kind.DANGER_TEXT) {
-                bg { Vd.destroyDisplay(applicationContext, d.id) }
-            }, dl)
-            Ui.add(card, btns, top = 10)
-            Ui.add(displaysBox, card, top = 10)
+            val more = IconView(this, IconView.MORE)
+            more.tint = Ui.MUTED
+            more.setOnClickListener {
+                Ui.menu(this, more, listOf(
+                    Ui.MenuItem("Open viewer") { openViewer(d.id) },
+                    Ui.MenuItem("Destroy display", danger = true) { bg { Vd.destroyDisplay(applicationContext, d.id) } }
+                ))
+            }
+            row.addView(more)
+            Ui.add(displaysBox, row, top = 10)
         }
     }
 
@@ -345,7 +307,7 @@ class MainActivity : Activity() {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
-            row.setPadding(dp(14), dp(10), dp(8), dp(10))
+            row.setPadding(dp(14), dp(6), dp(4), dp(6))
             row.background = Ui.surface(this, clickable = true)
             row.setOnClickListener { openViewer(r.display.id) }
 
@@ -366,13 +328,22 @@ class MainActivity : Activity() {
             cp.leftMargin = dp(12)
             row.addView(col, cp)
 
-            row.addView(Ui.button(this, "Stop", Ui.Kind.DANGER_TEXT) {
-                bg {
-                    log(Vd.exec("am force-stop ${r.pkg}"))
-                    Thread.sleep(800)
-                    runOnUiThread { refreshTasks() }
-                }
-            })
+            val shared = list.count { it.display.id == r.display.id } > 1
+            val more = IconView(this, IconView.MORE)
+            more.tint = Ui.MUTED
+            more.setOnClickListener {
+                Ui.menu(this, more, listOf(
+                    Ui.MenuItem("Open viewer") { openViewer(r.display.id) },
+                    Ui.MenuItem("Stop app", danger = true) {
+                        bg {
+                            log(Vd.exec("am force-stop ${r.pkg}"))
+                            Thread.sleep(800)
+                            runOnUiThread { refreshTasks() }
+                        }
+                    }
+                ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
+            }
+            row.addView(more)
             Ui.add(tasksBox, row, top = 10)
         }
     }
@@ -491,10 +462,25 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun moveToOwnDisplay(r: Row) {
+        bg {
+            val id = Vd.createDisplay(applicationContext, r.display.landscape)
+            if (id >= 0) log("Move ${r.pkg} to #$id:\n" + Vd.exec("am display move-stack ${r.taskId} $id"))
+            Thread.sleep(600)
+            runOnUiThread { refresh() }
+        }
+    }
+
     private fun launchApp(pkg: String, landscape: Boolean) {
         Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show()
         bg {
-            val id = Vd.ensureDisplay(applicationContext, landscape)
+            // Already running on a hidden display: just open it instead of starting a second copy.
+            val existing = Vd.displayOf(pkg)
+            if (existing != null) {
+                runOnUiThread { openViewer(existing) }
+                return@bg
+            }
+            val id = Vd.freeDisplay(applicationContext, landscape)
             if (id >= 0) {
                 log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
                 // Refresh twice so the app shows up as soon as it exists.
@@ -503,6 +489,78 @@ class MainActivity : Activity() {
                 Thread.sleep(900)
                 runOnUiThread { refresh() }
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- menus
+
+    private fun showMainMenu() {
+        val items = ArrayList<Ui.MenuItem>()
+        items.add(Ui.MenuItem("Refresh") { refresh() })
+        items.add(Ui.MenuItem("Diagnostics & log" + if (moreBtn.badge) "  •" else "") { showDiagnostics() })
+        if (Vd.service != null && Vd.displays.isNotEmpty()) {
+            items.add(Ui.MenuItem("Stop all and destroy displays", danger = true) { confirmStopAll() })
+        }
+        items.add(Ui.MenuItem("Hider Lab $versionName"))
+        Ui.menu(this, moreBtn, items)
+    }
+
+    private fun confirmStopAll() {
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, "Stop everything?", 18f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "This closes every app on the hidden displays and destroys the displays.", 13f, Ui.MUTED), top = 4)
+            Ui.add(body, Ui.button(this, "Stop all", Ui.Kind.DANGER) {
+                dlg.dismiss()
+                bg { Vd.stopAll(applicationContext) }
+            }, top = 16)
+            Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 4)
+        }
+    }
+
+    private fun showDiagnostics() {
+        moreBtn.badge = false
+        Ui.sheet(this, 0.85f) { body, dlg ->
+            body.addView(Ui.text(this, "Diagnostics & log", 18f, Ui.TEXT, bold = true))
+
+            val scroll = ScrollView(this)
+            scroll.isVerticalScrollBarEnabled = false
+            val col = LinearLayout(this)
+            col.orientation = LinearLayout.VERTICAL
+            scroll.addView(col)
+            Ui.add(body, scroll, top = 8, h = 0, weight = 1f)
+
+            fun diag(label: String, action: () -> Unit) {
+                Ui.add(col, Ui.button(this, label, Ui.Kind.TONAL) { action() }, top = 8)
+            }
+            diag("Heartbeat test on first hidden display") { heartbeatOn(Vd.displays.firstOrNull()?.id ?: -1) }
+            diag("Heartbeat control on main display") { heartbeatOn(0) }
+            diag("Check heartbeat result") { log(analyze()) }
+            diag("Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
+            diag("Show where apps are") {
+                bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
+            }
+            diag("Show Recents entries") {
+                bg { log(Vd.exec("dumpsys activity recents | grep -E 'Recent #|baseIntent|flg=' | head -40")) }
+            }
+            diag("Show Hiber log for Hider Lab") {
+                bg { log(Vd.exec("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")) }
+            }
+
+            val header = Ui.text(this, "Log", 13f, Ui.MUTED, bold = true)
+            Ui.add(col, header, top = 22)
+            val tv = Ui.text(this, if (logBuf.isEmpty()) "Nothing logged yet." else logBuf.toString(), 12f, Ui.MUTED)
+            tv.typeface = android.graphics.Typeface.MONOSPACE
+            tv.setTextIsSelectable(true)
+            Ui.add(col, tv, top = 6)
+            Ui.add(col, Ui.button(this, "Clear log", Ui.Kind.TEXT) {
+                logBuf.setLength(0)
+                tv.text = "Nothing logged yet."
+            }, top = 6, w = ViewGroup.LayoutParams.WRAP_CONTENT)
+
+            logTv = tv
+            logScroll = scroll
+            logHeader = header
+            dlg.setOnDismissListener { logTv = null; logScroll = null; logHeader = null }
         }
     }
 

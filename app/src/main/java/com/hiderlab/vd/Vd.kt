@@ -115,9 +115,17 @@ object Vd {
         return id
     }
 
-    /** Finds a display of the wanted orientation, or creates one. Returns its id, or -1. */
-    fun ensureDisplay(ctx: Context, landscape: Boolean): Int =
-        displays.firstOrNull { it.landscape == landscape }?.id ?: createDisplay(ctx, landscape)
+    /** The hidden display [pkg] is already running on, or null. */
+    fun displayOf(pkg: String): Int? = displays.firstOrNull { d -> tasks(d.id).any { it.second == pkg } }?.id
+
+    /**
+     * Every app gets its own display. Android only keeps the top app on a display resumed, so a
+     * second app on the same display would freeze the first. An empty display of the right
+     * orientation is reused; otherwise a new one is created. Returns its id, or -1.
+     */
+    fun freeDisplay(ctx: Context, landscape: Boolean): Int =
+        displays.firstOrNull { it.landscape == landscape && tasks(it.id).isEmpty() }?.id
+            ?: createDisplay(ctx, landscape)
 
     fun launch(ctx: Context, pkg: String, display: Int): String {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()

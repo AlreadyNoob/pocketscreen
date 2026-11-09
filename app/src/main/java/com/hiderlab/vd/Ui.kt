@@ -22,6 +22,7 @@ import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 
 /** Small dark-theme toolkit so the screens don't need XML, themes or extra libraries. */
@@ -160,6 +161,37 @@ object Ui {
         }
     }
 
+    class MenuItem(val label: String, val danger: Boolean = false, val action: (() -> Unit)? = null)
+
+    /** A small dark dropdown menu under [anchor]. An item with no action is shown as a muted label. */
+    fun menu(a: Activity, anchor: View, items: List<MenuItem>) {
+        val box = LinearLayout(a)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(0, dp(a, 6), 0, dp(a, 6))
+        box.background = shape(SURFACE2, dpf(a, 16f), OUTLINE, dp(a, 1))
+        val pw = PopupWindow(box, dp(a, 244), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        pw.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        pw.isOutsideTouchable = true
+        for (item in items) {
+            val act = item.action
+            val t = TextView(a)
+            t.text = item.label
+            t.setPadding(dp(a, 18), dp(a, 13), dp(a, 18), dp(a, 13))
+            if (act == null) {
+                t.textSize = 12f
+                t.setTextColor(MUTED)
+            } else {
+                t.textSize = 15f
+                t.setTextColor(if (item.danger) DANGER_FG else TEXT)
+                t.background = withRipple(null, 0f)
+                t.isClickable = true
+                t.setOnClickListener { pw.dismiss(); act() }
+            }
+            box.addView(t, LinearLayout.LayoutParams(-1, -2))
+        }
+        pw.showAsDropDown(anchor, 0, 0, Gravity.END)
+    }
+
     /** A bottom sheet. [heightFrac] of 0 wraps the content; otherwise it is a fraction of the screen height. */
     fun sheet(a: Activity, heightFrac: Float = 0f, build: (LinearLayout, Dialog) -> Unit): Dialog {
         val d = Dialog(a)
@@ -202,9 +234,14 @@ class IconView(ctx: Context, private val kind: Int) : View(ctx) {
     companion object {
         const val BACK = 0
         const val KEYBOARD = 1
+        const val MORE = 2
     }
 
     var tint: Int = Ui.TEXT
+        set(v) { field = v; invalidate() }
+
+    /** Small dot in the corner, used to flag unread log output. */
+    var badge: Boolean = false
         set(v) { field = v; invalidate() }
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -224,6 +261,15 @@ class IconView(ctx: Context, private val kind: Int) : View(ctx) {
     }
 
     override fun onDraw(c: Canvas) {
+        drawIcon(c)
+        if (badge) {
+            p.style = Paint.Style.FILL
+            p.color = Ui.ACCENT
+            c.drawCircle(width * 0.68f, height * 0.32f, Ui.dpf(context, 4.5f), p)
+        }
+    }
+
+    private fun drawIcon(c: Canvas) {
         val cx = width / 2f
         val cy = height / 2f
         p.color = tint
@@ -236,6 +282,13 @@ class IconView(ctx: Context, private val kind: Int) : View(ctx) {
             path.lineTo(cx - s, cy)
             path.lineTo(cx - s + s * 0.9f, cy + s * 0.9f)
             c.drawPath(path, p)
+        } else if (kind == MORE) {
+            val gap = minOf(width, height) * 0.16f
+            val r = Ui.dpf(context, 2.4f)
+            p.style = Paint.Style.FILL
+            c.drawCircle(cx, cy - gap, r, p)
+            c.drawCircle(cx, cy, r, p)
+            c.drawCircle(cx, cy + gap, r, p)
         } else {
             val s = minOf(width, height) * 0.2f
             val w = s * 1.7f
