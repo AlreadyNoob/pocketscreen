@@ -283,7 +283,7 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- app list
 
-    private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String, val frozen: Boolean)
+    private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String)
 
     private fun refreshTasks() {
         val disp = Vd.displays
@@ -293,7 +293,7 @@ class MainActivity : Activity() {
             return
         }
         bg {
-            val rows = disp.flatMap { d -> Vd.tasks(d.id).map { Row(d, it.first, it.second, Vd.isFrozen(it.second)) } }
+            val rows = disp.flatMap { d -> Vd.tasks(d.id).map { Row(d, it.first, it.second) } }
             runOnUiThread { renderTasks(rows) }
         }
     }
@@ -325,7 +325,7 @@ class MainActivity : Activity() {
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
             val muted = Vd.isMuted(this, r.pkg)
-            col.addView(Ui.text(this, "Display #${r.display.id} · ${if (r.display.landscape) "Landscape" else "Portrait"}" + (if (r.frozen) " · Frozen" else "") + (if (muted) " · Muted" else ""), 12f, Ui.MUTED))
+            col.addView(Ui.text(this, "Display #${r.display.id} · ${if (r.display.landscape) "Landscape" else "Portrait"}" + (if (muted) " · Muted" else ""), 12f, Ui.MUTED))
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(12)
             row.addView(col, cp)
@@ -336,18 +336,6 @@ class MainActivity : Activity() {
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("Open viewer") { openViewer(r.display.id) },
-                    Ui.MenuItem(if (r.frozen) "Resume app" else "Freeze app") {
-                        Toast.makeText(this, if (r.frozen) "Resuming…" else "Freezing… this can take up to 20 seconds", Toast.LENGTH_LONG).show()
-                        bg {
-                            val res = if (r.frozen) Vd.resume(applicationContext, r.pkg, r.display.id)
-                                else Vd.freeze(applicationContext, r.pkg, r.display.id)
-                            log(res)
-                            runOnUiThread {
-                                Toast.makeText(this, res.lines().first(), Toast.LENGTH_LONG).show()
-                                refreshTasks()
-                            }
-                        }
-                    },
                     Ui.MenuItem(if (muted) "Unmute sound" else "Mute sound") {
                         bg {
                             log("${if (muted) "Unmute" else "Mute"} ${Apps.label(applicationContext, r.pkg)}:\n" +
@@ -688,10 +676,6 @@ class MainActivity : Activity() {
             diag("Heartbeat control on main display") { heartbeatOn(0) }
             diag("Check heartbeat result") { log(analyze()) }
             diag("Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
-            diag("Show freeze-related shell commands") {
-                bg { log(Vd.exec("id; cmd activity help 2>&1 | grep -i -E 'freez|suspend|stop|kill'")) }
-            }
-            diag("Resume all frozen apps") { bg { log(Vd.resumeAll(applicationContext)); runOnUiThread { refreshTasks() } } }
             diag("Give sound back to all muted apps") { bg { log(Vd.restoreAllAudio(applicationContext)) } }
             diag("Show where apps are") {
                 bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }

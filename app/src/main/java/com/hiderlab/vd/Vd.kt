@@ -87,146 +87,8 @@ object Vd {
         if (raw.startsWith("ERR")) { log(raw); return emptyList() }
         return raw.lines().mapNotNull {
             val p = it.split("|")
-            if (p.size == 2 && p[1] != OWN_PKG) p[0].toIntOrNull()?.let { id -> id to p[1] } else null
+            if (p.size == 2) p[0].toIntOrNull()?.let { id -> id to p[1] } else null
         }
-    }
-
-    // ---- freeze / resume ----
-
-    private const val OWN_PKG = "com.hiderlab.vd"
-
-    private enum class How { SYSTEM, COVER }
-
-    /** Apps we froze, and how. The system gives no easy "is it frozen" query, so we keep track ourselves. */
-    private val frozen = java.util.concurrent.ConcurrentHashMap<String, How>()
-
-    private fun running(pkg: String): Boolean = exec("pidof $pkg").trim().firstOrNull()?.isDigit() == true
-
-    /** Process ids of the app: the main process plus any ":service" style extras. */
-    private fun pidsOf(pkg: String): List<Pair<Int, String>> =
-        exec("ps -A -o PID,ARGS").lines().mapNotNull { l ->
-            val t = l.trim().split(Regex("\\s+"), 2)
-            val pid = t.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
-            val name = t.getOrNull(1)?.trim()?.substringBefore(' ') ?: return@mapNotNull null
-            if (name == pkg || name.startsWith("$pkg:")) pid to name else null
-        }
-
-    /** CPU time used so far by the app (in 10 ms ticks) and, if readable, the kernel's freezer flag. */
-    private data class Probe(val alive: Boolean, val ticks: Long, val kernelFrozen: Boolean?)
-
-    private fun probe(pkg: String): Probe {
-        val pids = pidsOf(pkg).map { it.first }
-        if (pids.isEmpty()) return Probe(false, 0, null)
-        val script = pids.joinToString("; ") {
-            "echo \"S $(cat /proc/$it/stat 2>/dev/null)\"; " +
-                "c=$(head -n 1 /proc/$it/cgroup 2>/dev/null); " +
-                "echo \"F $(cat /sys/fs/cgroup/${'$'}{c#0::}/cgroup.freeze 2>/dev/null)\""
-        }
-        var ticks = 0L
-        val flags = ArrayList<String>()
-        for (line in exec(script).lines()) {
-            if (line.startsWith("S ") && line.contains(")")) {
-                val f = line.substringAfterLast(")").trim().split(" ")
-                ticks += (f.getOrNull(11)?.toLongOrNull() ?: 0L) + (f.getOrNull(12)?.toLongOrNull() ?: 0L)
-            } else if (line.startsWith("F ")) {
-                flags.add(line.removePrefix("F ").trim())
-            }
-        }
-        val known = flags.filter { it == "0" || it == "1" }
-        val kf = if (known.isEmpty()) null else known.all { it == "1" }
-        return Probe(true, ticks, kf)
-    }
-
-    /** How many CPU ticks the app used over [ms]. A busy app is well above zero; a stopped one is zero. */
-    private fun cpuOver(pkg: String, ms: Long): Long {
-        val a = probe(pkg)
-        Thread.sleep(ms)
-        val b = probe(pkg)
-        return if (a.alive && b.alive) b.ticks - a.ticks else -1
-    }
-
-    /** True if we froze the app and it is still running (a restarted app is no longer frozen). */
-    fun isFrozen(pkg: String): Boolean {
-        if (!frozen.containsKey(pkg)) return false
-        if (running(pkg)) return true
-        frozen.remove(pkg)
-        return false
-    }
-
-    private val errRe = Regex("(?i)error|exception|unknown|usage|denied|not permitted|no such|invalid")
-
-    private fun systemFreezer(pkg: String, freeze: Boolean): String {
-        val cmd = if (freeze) "freeze" else "unfreeze"
-        return pidsOf(pkg).map { it.second }.distinct().ifEmpty { listOf(pkg) }
-            .joinToString("\n") { "  $it: " + exec("cmd activity $cmd --sticky $it").trim().ifEmpty { "(no output)" } }
-    }
-
-    /**
-     * Freezes the app for real, and checks that it worked: this phone's `cmd activity freeze`
-     * accepts the command without freezing anything, so silence is not proof.
-     *
-     * 1. The system's own freezer (`cmd activity freeze`). Counted only if the kernel says the app
-     *    is frozen, or a busy app's CPU use drops to zero.
-     * 2. Otherwise the app is covered with a blank screen on its display. The app is then in the
-     *    background, and the phone's Hiber freezer freezes it a few seconds later.
-     */
-    fun freeze(ctx: Context, pkg: String, display: Int): String {
-        if (!running(pkg)) { frozen.remove(pkg); return "$pkg isn't running." }
-        val rep = StringBuilder()
-        val busy = cpuOver(pkg, 1000)
-        rep.append("CPU before: ").append(if (busy < 0) "unknown" else "$busy ticks/s").append('\n')
-
-        // 1. System freezer
-        rep.append("System freezer:\n").append(systemFreezer(pkg, true)).append('\n')
-        Thread.sleep(600)
-        val k = probe(pkg).kernelFrozen
-        val after = cpuOver(pkg, 1200)
-        val sysOk = k == true || (busy >= 5 && after == 0L)
-        rep.append("  kernel frozen flag: ").append(k ?: "unreadable").append(", CPU after: ").append(after).append(" ticks\n")
-        if (sysOk) {
-            frozen[pkg] = How.SYSTEM
-            return "Frozen $pkg (system freezer, verified).\n$rep".trim()
-        }
-        rep.append("  -> did not freeze, undoing.\n").append(systemFreezer(pkg, false)).append('\n')
-
-        // 2. Cover it so Hiber freezes it
-        rep.append("Cover + Hiber:\n")
-        val r = exec("am start --display $display -f $LAUNCH_FLAGS -n $OWN_PKG/.FrozenActivity").trim()
-        rep.append("  ").append(r.lines().lastOrNull().orEmpty()).append('\n')
-        if (errRe.containsMatchIn(r)) return "Could not freeze $pkg.\n$rep".trim()
-        frozen[pkg] = How.COVER
-        var still = 0
-        for (i in 1..14) {
-            Thread.sleep(1000)
-            val p = probe(pkg)
-            if (!p.alive) { frozen.remove(pkg); return "$pkg stopped running.\n$rep".trim() }
-            if (p.kernelFrozen == true) { still = 99; break }
-            val d = cpuOver(pkg, 700)
-            if (d == 0L) still++ else still = 0
-            if (still >= 2) break
-        }
-        return if (still >= 2) "Frozen $pkg (covered, then frozen by Hiber).\n$rep".trim()
-        else "Paused $pkg (covered), but it is still using CPU, so it may not be fully frozen.\n$rep".trim()
-    }
-
-    /** Resumes a frozen app. */
-    fun resume(ctx: Context, pkg: String, display: Int): String {
-        val how = frozen.remove(pkg)
-        if (!running(pkg)) return "$pkg isn't running."
-        val rep = StringBuilder()
-        // Undo both routes; it is harmless to undo one that was not used.
-        if (how != How.COVER) rep.append(systemFreezer(pkg, false)).append('\n')
-        if (how != How.SYSTEM) rep.append(launch(ctx, pkg, display).lines().lastOrNull().orEmpty()).append('\n')
-        Thread.sleep(1500)
-        val d = cpuOver(pkg, 1000)
-        return "Resumed $pkg" + (if (d >= 0) " (CPU $d ticks/s)" else "") + ".\n$rep".trim()
-    }
-
-    /** Resumes every frozen app. */
-    fun resumeAll(ctx: Context): String {
-        val pkgs = frozen.keys.toList()
-        return if (pkgs.isEmpty()) "No frozen apps."
-        else pkgs.joinToString("\n") { resume(ctx, it, displayOf(it) ?: 0) }
     }
 
     // ---- per-app mute ----
@@ -280,7 +142,6 @@ object Vd {
 
     /** Force-stops an app and returns its sound to normal. */
     fun stopApp(ctx: Context, pkg: String): String {
-        frozen.remove(pkg)
         val r = exec("am force-stop $pkg")
         restoreAudio(ctx, pkg)
         return r
