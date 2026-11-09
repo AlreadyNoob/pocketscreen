@@ -13,7 +13,10 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
+import android.os.Handler
+import android.os.Looper
 
 /**
  * Live view of the hidden display. While this screen is open the display draws into the
@@ -26,6 +29,21 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
     private var dw = 720
     private var dh = 1280
     private lateinit var input: EditText
+    private lateinit var statusLine: TextView
+    private val ui = Handler(Looper.getMainLooper())
+    private var touches = 0
+    private val poll = object : Runnable {
+        override fun run() {
+            Thread {
+                Vd.refreshInfo()
+                ui.post {
+                    statusLine.text = "display #${Vd.displayId}  touches sent: $touches  " +
+                        (if (Vd.inputError.isEmpty()) "input: ok" else "input ERROR: ${Vd.inputError}")
+                }
+            }.start()
+            ui.postDelayed(this, 2000)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +92,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
             }
             val x = (e.x * dw / v.width).coerceIn(0f, (dw - 1).toFloat())
             val y = (e.y * dh / v.height).coerceIn(0f, (dh - 1).toFloat())
+            touches++
             try { Vd.service?.touch(action, x, y) } catch (_: Throwable) {}
             true
         }
@@ -101,6 +120,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         key("→", KeyEvent.KEYCODE_DPAD_RIGHT)
         key("Del", KeyEvent.KEYCODE_DEL)
         key("Enter", KeyEvent.KEYCODE_ENTER)
+        statusLine = TextView(this).apply { setTextColor(Color.LTGRAY); textSize = 11f; text = "..." }
+        root.addView(statusLine)
         root.addView(HorizontalScrollView(this).apply { addView(keys) })
 
         // Text row
@@ -136,6 +157,16 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
             }
             if (enter) try { Vd.service?.key(KeyEvent.KEYCODE_ENTER, 0) } catch (_: Throwable) {}
         }.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::statusLine.isInitialized) ui.post(poll)
+    }
+
+    override fun onPause() {
+        ui.removeCallbacks(poll)
+        super.onPause()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {

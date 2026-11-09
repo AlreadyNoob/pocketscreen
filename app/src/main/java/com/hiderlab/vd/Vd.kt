@@ -83,11 +83,25 @@ object Vd {
     fun createDisplay(ctx: Context): String {
         val s = service ?: return "Not connected"
         if (displayId >= 0) return "Display #$displayId already exists"
-        val dm = ctx.resources.displayMetrics
-        val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
-        val w = 720
-        val h = (w * ratio).toInt() and 1.inv()
-        val r = try { s.createDisplay(w, h, 320) } catch (t: Throwable) { "ERR: $t" }
+        val match = ctx.getSharedPreferences("hider", Context.MODE_PRIVATE).getBoolean("match", false)
+        var w: Int
+        var h: Int
+        var dpi = 320
+        if (match) {
+            val real = android.util.DisplayMetrics()
+            val d0 = (ctx.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager)
+                .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            @Suppress("DEPRECATION") d0.getRealMetrics(real)
+            w = minOf(real.widthPixels, real.heightPixels)
+            h = maxOf(real.widthPixels, real.heightPixels)
+            dpi = real.densityDpi
+        } else {
+            val dm = ctx.resources.displayMetrics
+            val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
+            w = 720
+            h = (w * ratio).toInt() and 1.inv()
+        }
+        val r = try { s.createDisplay(w, h, dpi) } catch (t: Throwable) { "ERR: $t" }
         if (r.startsWith("OK:")) {
             refreshInfo()
             try {

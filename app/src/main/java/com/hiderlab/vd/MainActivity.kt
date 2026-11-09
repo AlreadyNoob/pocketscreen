@@ -14,6 +14,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -76,6 +77,13 @@ class MainActivity : Activity() {
 
         btnGrant = button(root, "1. Grant Shizuku permission") { grant() }
         btnConnect = button(root, "2. Connect service") { Vd.connect(applicationContext, force = true) }
+        root.addView(CheckBox(this).apply {
+            text = "Match main screen size (fewer app restarts on To main, more battery)"
+            isChecked = getSharedPreferences("hider", MODE_PRIVATE).getBoolean("match", false)
+            setOnCheckedChangeListener { _, on ->
+                getSharedPreferences("hider", MODE_PRIVATE).edit().putBoolean("match", on).apply()
+            }
+        })
         btnCreate = button(root, "Create hidden display") { bg { log(Vd.createDisplay(applicationContext)) } }
         btnLaunch = button(root, "Launch app on hidden display…") { pickApp() }
         btnViewer = button(root, "Open viewer (see and control)") {
