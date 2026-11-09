@@ -279,6 +279,8 @@ class MainActivity : Activity() {
         }
     }
 
+    private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String)
+
     private val emptySince = HashMap<Int, Long>()
 
     private fun refreshTasks() {
