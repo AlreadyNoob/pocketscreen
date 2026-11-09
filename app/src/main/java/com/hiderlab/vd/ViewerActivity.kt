@@ -81,6 +81,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Ui.applyTheme(this)
         displayId = intent.getIntExtra("display", -1)
         val d = Vd.display(displayId)
         if (Vd.service == null || d == null) {

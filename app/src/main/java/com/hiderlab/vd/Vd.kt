@@ -245,16 +245,33 @@ object Vd {
         return if (t <= 0L) null else ((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0)
     }
 
+    /** Minutes as "5m" / "2h 10m". */
+    fun fmtMinutes(mins: Long): String = when {
+        mins < 1 -> "<1m"
+        mins < 60 -> "${mins}m"
+        else -> "${mins / 60}h ${mins % 60}m"
+    }
+
     /** How long [pkg] has been running here, as "5m" / "2h 10m", or null if unknown. */
     fun sessionText(ctx: Context, pkg: String): String? {
         val t = sessionPrefs(ctx).getLong(pkg, 0L)
         if (t <= 0L) return null
-        val mins = ((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0)
-        return when {
-            mins < 1 -> "<1m"
-            mins < 60 -> "${mins}m"
-            else -> "${mins / 60}h ${mins % 60}m"
-        }
+        return fmtMinutes(((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0))
+    }
+
+    /**
+     * Time left before auto-stop, as "18m left" / "1h 5m left", or null when no time limit applies
+     * to [pkg] (neither its own nor the default) or the start time is unknown.
+     */
+    fun remainingText(ctx: Context, pkg: String): String? {
+        val limit = AppSettings.effectiveMinutes(ctx, pkg)
+        if (limit <= 0) return null
+        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        if (t <= 0L) return null
+        val leftMs = limit * 60000L - (System.currentTimeMillis() - t)
+        if (leftMs <= 0L) return "stopping soon"
+        val mins = (leftMs + 59999L) / 60000L
+        return "${fmtMinutes(mins)} left"
     }
 
     // ---- display size settings ----

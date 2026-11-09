@@ -14,6 +14,10 @@ object AppSettings {
     fun backGesture(c: Context): Boolean = p(c).getBoolean("back_gesture", true)
     fun setBackGesture(c: Context, on: Boolean) { p(c).edit().putBoolean("back_gesture", on).apply() }
 
+    /** On Android 12+, use the system (wallpaper) colors. On by default. */
+    fun dynamicColor(c: Context): Boolean = p(c).getBoolean("dynamic_color", true)
+    fun setDynamicColor(c: Context, on: Boolean) { p(c).edit().putBoolean("dynamic_color", on).apply() }
+
     /** Stop everything when the battery is at or below this percent and not charging. 0 = off. */
     fun autoStopBattery(c: Context): Int = p(c).getInt("auto_battery", 0)
     fun setAutoStopBattery(c: Context, v: Int) { p(c).edit().putInt("auto_battery", v).apply() }
