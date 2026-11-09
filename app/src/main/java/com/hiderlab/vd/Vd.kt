@@ -101,6 +101,9 @@ object Vd {
             w = 720
             h = (w * ratio).toInt() and 1.inv()
         }
+        if (ctx.getSharedPreferences("hider", Context.MODE_PRIVATE).getBoolean("land", false)) {
+            val t = w; w = h; h = t
+        }
         val r = try { s.createDisplay(w, h, dpi) } catch (t: Throwable) { "ERR: $t" }
         if (r.startsWith("OK:")) {
             refreshInfo()

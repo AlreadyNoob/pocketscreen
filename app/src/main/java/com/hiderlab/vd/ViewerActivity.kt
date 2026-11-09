@@ -150,10 +150,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         val cw = box.width
         val ch = box.height
         if (cw <= 0 || ch <= 0) return
-        val land = rot == 1 || rot == 3
-        val vw = if (land) dh else dw
-        val vh = if (land) dw else dh
-        val sc = minOf(cw.toFloat() / vw, ch.toFloat() / vh)
+        val sc = minOf(cw.toFloat() / dw, ch.toFloat() / dh)
         val nw = (dw * sc).toInt()
         val nh = (dh * sc).toInt()
         val lp = sv.layoutParams
@@ -162,7 +159,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
             lp.height = nh
             sv.layoutParams = lp
         }
-        sv.rotation = when (rot) { 1 -> -90f; 3 -> 90f; 2 -> 180f; else -> 0f }
     }
 
     private fun sendText(enter: Boolean) {

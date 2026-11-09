@@ -84,6 +84,13 @@ class MainActivity : Activity() {
                 getSharedPreferences("hider", MODE_PRIVATE).edit().putBoolean("match", on).apply()
             }
         })
+        root.addView(CheckBox(this).apply {
+            text = "Landscape display (for games that force landscape)"
+            isChecked = getSharedPreferences("hider", MODE_PRIVATE).getBoolean("land", false)
+            setOnCheckedChangeListener { _, on ->
+                getSharedPreferences("hider", MODE_PRIVATE).edit().putBoolean("land", on).apply()
+            }
+        })
         btnCreate = button(root, "Create hidden display") { bg { log(Vd.createDisplay(applicationContext)) } }
         btnLaunch = button(root, "Launch app on hidden display…") { pickApp() }
         btnViewer = button(root, "Open viewer (see and control)") {
