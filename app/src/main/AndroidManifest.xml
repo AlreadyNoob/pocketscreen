@@ -15,7 +15,9 @@
 
     <application
         android:allowBackup="false"
-        android:label="Hider Lab"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="PocketScreen"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <provider

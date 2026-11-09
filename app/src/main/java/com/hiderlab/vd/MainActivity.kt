@@ -86,7 +86,7 @@ class MainActivity : Activity() {
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
-        head.addView(Ui.text(this, "Hider Lab", 28f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(Ui.text(this, "PocketScreen", 28f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
         moreBtn = IconView(this, IconView.MORE)
         moreBtn.setOnClickListener { showMainMenu() }
         val mlp = LinearLayout.LayoutParams(-2, -2)
@@ -217,7 +217,7 @@ class MainActivity : Activity() {
 
         helperView.text = when {
             !ping -> "Shizuku isn't running. Start it from wireless debugging, then come back."
-            !perm -> "Allow Hider Lab in Shizuku to continue."
+            !perm -> "Allow PocketScreen in Shizuku to continue."
             else -> "Connecting to the service…"
         }
         setupCard.visibility = if (connected) View.GONE else View.VISIBLE
@@ -621,7 +621,7 @@ class MainActivity : Activity() {
         if (Vd.service != null && Vd.displays.isNotEmpty()) {
             items.add(Ui.MenuItem("Stop all and destroy displays", danger = true) { confirmStopAll() })
         }
-        items.add(Ui.MenuItem("Hider Lab $versionName"))
+        items.add(Ui.MenuItem("PocketScreen $versionName"))
         Ui.menu(this, moreBtn, items)
     }
 
@@ -662,7 +662,7 @@ class MainActivity : Activity() {
             diag("Show Recents entries") {
                 bg { log(Vd.exec("dumpsys activity recents | grep -E 'Recent #|baseIntent|flg=' | head -40")) }
             }
-            diag("Show Hiber log for Hider Lab") {
+            diag("Show Hiber log for PocketScreen") {
                 bg { log(Vd.exec("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")) }
             }
 

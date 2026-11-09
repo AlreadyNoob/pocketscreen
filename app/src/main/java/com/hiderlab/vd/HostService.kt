@@ -41,7 +41,7 @@ class HostService : Service() {
         )
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("Hider Lab")
+            .setContentTitle("PocketScreen")
             .setContentText("Hidden display is running")
             .setContentIntent(open)
             .setOngoing(true)

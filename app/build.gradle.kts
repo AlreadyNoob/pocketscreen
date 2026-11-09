@@ -15,6 +15,18 @@ android {
         versionCode = runNumber
         versionName = "0.8.$runNumber"
     }
+    // Fixed signing key, so every build has the same signature and installs over the old one.
+    signingConfigs {
+        create("hider") {
+            storeFile = file("hiderlab.jks")
+            storePassword = "hiderlab123"
+            keyAlias = "hiderlab"
+            keyPassword = "hiderlab123"
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("hider") }
+    }
     buildFeatures { aidl = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
