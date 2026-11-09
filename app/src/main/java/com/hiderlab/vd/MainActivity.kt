@@ -419,7 +419,7 @@ class MainActivity : Activity() {
     }
 
     private fun askOrientation(a: Apps.App) {
-        var sel = a.landscape
+        var sel = a.landscape ?: false
         Ui.sheet(this) { body, dlg ->
             body.addView(Ui.text(this, a.label, 18f, Ui.TEXT, bold = true))
             Ui.add(body, Ui.text(this, "Choose the hidden display orientation", 13f, Ui.MUTED), top = 2)
