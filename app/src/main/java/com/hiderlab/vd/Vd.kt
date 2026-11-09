@@ -147,7 +147,7 @@ object Vd {
 
     /** True if we froze the app and it is still running (a restarted app is no longer frozen). */
     fun isFrozen(pkg: String): Boolean {
-        if (pkg !in frozen) return false
+        if (!frozen.containsKey(pkg)) return false
         if (running(pkg)) return true
         frozen.remove(pkg)
         return false
