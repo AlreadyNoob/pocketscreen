@@ -1,15 +1,22 @@
 package com.hiderlab.vd
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
-import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import android.os.IBinder
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.Gravity
+import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import rikka.shizuku.Shizuku
@@ -19,24 +26,18 @@ class MainActivity : Activity() {
 
     private lateinit var statusView: TextView
     private lateinit var logView: TextView
-    @Volatile private var service: IVdService? = null
-    @Volatile private var displayId = -1
+    private lateinit var tasksBox: LinearLayout
+    private lateinit var btnGrant: Button
+    private lateinit var btnConnect: Button
+    private lateinit var btnCreate: Button
+    private lateinit var btnLaunch: Button
+    private lateinit var btnViewer: Button
+    private lateinit var btnDestroy: Button
 
-    private val conn = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            service = IVdService.Stub.asInterface(binder)
-            log("Service connected")
-            bg { displayId = service?.currentDisplay() ?: -1; runOnUiThread { refresh() } }
-        }
-        override fun onServiceDisconnected(name: ComponentName) {
-            service = null
-            log("Service disconnected")
-            runOnUiThread { refresh() }
-        }
-    }
+    private val refreshRunnable = Runnable { runOnUiThread { refresh() } }
 
     private val permListener = Shizuku.OnRequestPermissionResultListener { _, result ->
-        log("Permission result: ${if (result == PackageManager.PERMISSION_GRANTED) "granted" else "denied"}")
+        log("Permission: ${if (result == PackageManager.PERMISSION_GRANTED) "granted" else "denied"}")
         runOnUiThread { refresh() }
     }
     private val binderListener = Shizuku.OnBinderReceivedListener { runOnUiThread { refresh() } }
@@ -44,48 +45,79 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    private fun button(parent: LinearLayout, label: String, action: () -> Unit): Button {
+        val b = Button(this).apply {
+            text = label
+            isAllCaps = false
+            setOnClickListener { action() }
+        }
+        parent.addView(b)
+        return b
+    }
+
+    private fun header(parent: LinearLayout, text: String) {
+        parent.addView(TextView(this).apply {
+            this.text = text
+            textSize = 16f
+            setPadding(0, dp(16), 0, dp(4))
+        })
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        val scroll = ScrollView(this).apply { addView(root); fitsSystemWindows = true }
-        setContentView(scroll)
+        setContentView(ScrollView(this).apply { addView(root); fitsSystemWindows = true })
 
         statusView = TextView(this).apply { textSize = 14f }
         root.addView(statusView)
 
-        fun add(label: String, action: () -> Unit) {
-            root.addView(Button(this@MainActivity).apply {
-                text = label
-                isAllCaps = false
-                setOnClickListener { action() }
-            })
+        btnGrant = button(root, "1. Grant Shizuku permission") { grant() }
+        btnConnect = button(root, "2. Connect service") { Vd.connect(applicationContext, force = true) }
+        btnCreate = button(root, "Create hidden display") { bg { log(Vd.createDisplay(applicationContext)) } }
+        btnLaunch = button(root, "Launch app on hidden display…") { pickApp() }
+        btnViewer = button(root, "Open viewer (see and control)") {
+            startActivity(Intent(this, ViewerActivity::class.java))
         }
 
-        add("1. Grant Shizuku permission") { grant() }
-        add("2. Connect service") { connect() }
-        add("3. Create hidden display") { createDisplay() }
-        add("4. Test: heartbeat on HIDDEN display") { launchOn(displayId, "$packageName/.HeartbeatActivity") }
-        add("   Control: heartbeat on MAIN display") { launchOn(0, "$packageName/.HeartbeatActivity") }
-        add("5. Check heartbeat result") { log(analyze()) }
-        add("   Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
-        add("Launch another app on hidden display") { pickApp() }
-        add("Show where apps are") {
-            runCmd("dumpsys activity activities | grep -E 'Display #|topResumedActivity|ResumedActivity'")
-        }
-        add("Show Hiber log for this app") {
-            runCmd("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")
-        }
-        add("Destroy hidden display") { releaseDisplay() }
+        header(root, "Apps on the hidden display")
+        tasksBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(tasksBox)
+        button(root, "Refresh list") { refreshTasks() }
+        btnDestroy = button(root, "Stop all apps and destroy display") { bg { Vd.stopAll(applicationContext) } }
 
-        logView = TextView(this).apply { textSize = 12f; setTextIsSelectable(true); typeface = android.graphics.Typeface.MONOSPACE }
+        header(root, "Diagnostics")
+        button(root, "Heartbeat test on hidden display") { heartbeatOn(Vd.displayId) }
+        button(root, "Heartbeat control on main display") { heartbeatOn(0) }
+        button(root, "Check heartbeat result") { log(analyze()) }
+        button(root, "Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
+        button(root, "Show where apps are") {
+            bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
+        }
+        button(root, "Show Hiber log for Hider Lab") {
+            bg { log(Vd.exec("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")) }
+        }
+
+        logView = TextView(this).apply {
+            textSize = 12f
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, dp(12), 0, 0)
+        }
         root.addView(logView)
 
+        Vd.logSink = { log(it) }
+        Vd.listeners.add(refreshRunnable)
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(deadListener)
         Shizuku.addRequestPermissionResultListener(permListener)
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
+
         refresh()
     }
 
@@ -95,6 +127,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        Vd.listeners.remove(refreshRunnable)
+        Vd.logSink = null
         Shizuku.removeBinderReceivedListener(binderListener)
         Shizuku.removeBinderDeadListener(deadListener)
         Shizuku.removeRequestPermissionResultListener(permListener)
@@ -102,7 +136,7 @@ class MainActivity : Activity() {
     }
 
     private fun log(s: String) = runOnUiThread {
-        logView.text = "$s\n\n${logView.text}".take(8000)
+        if (::logView.isInitialized) logView.text = "$s\n\n${logView.text}".take(8000)
     }
 
     private fun bg(block: () -> Unit) {
@@ -112,82 +146,126 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
-        val ping = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
-        val perm = ping && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        statusView.text = "Shizuku: ${if (ping) "running" else "NOT running"}\n" +
-            "Permission: $perm\nService: ${service != null}\n" +
-            "Hidden display: ${if (displayId >= 0) "#$displayId" else "none"}"
-    }
+        val ping = Vd.shizukuRunning()
+        val perm = Vd.permitted()
+        if (perm && Vd.service == null) Vd.connect(applicationContext)
+        val connected = Vd.service != null
+        val hasDisplay = Vd.displayId >= 0
 
-    private fun svc(): IVdService? {
-        val s = service
-        if (s == null) log("Not connected. Do steps 1 and 2 first.")
-        return s
+        statusView.text = "Shizuku: ${if (ping) "running" else "NOT running (start it via wireless debugging)"}\n" +
+            "Permission: ${if (perm) "granted" else "not granted"}\n" +
+            "Service: ${if (connected) "connected" else "not connected"}\n" +
+            "Hidden display: ${if (hasDisplay) "#${Vd.displayId} (${Vd.width}x${Vd.height})" else "none"}"
+
+        fun vis(b: Button, show: Boolean) { b.visibility = if (show) View.VISIBLE else View.GONE }
+        vis(btnGrant, ping && !perm)
+        vis(btnConnect, perm && !connected)
+        vis(btnCreate, connected && !hasDisplay)
+        vis(btnLaunch, connected)
+        vis(btnViewer, connected && hasDisplay)
+        vis(btnDestroy, connected && hasDisplay)
+        refreshTasks()
     }
 
     private fun grant() {
-        if (!Shizuku.pingBinder()) { log("Shizuku isn't running. Start it first."); return }
-        if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) { log("Already granted"); return }
+        if (!Vd.shizukuRunning()) { log("Shizuku isn't running. Start it first."); return }
         Shizuku.requestPermission(100)
     }
 
-    @Suppress("DEPRECATION")
-    private fun connect() {
-        if (!Shizuku.pingBinder()) { log("Shizuku isn't running."); return }
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) { log("Grant permission first."); return }
-        val code = packageManager.getPackageInfo(packageName, 0).versionCode
-        val args = Shizuku.UserServiceArgs(ComponentName(packageName, VdService::class.java.name))
-            .daemon(true)
-            .processNameSuffix("vd")
-            .version(code)
-        Shizuku.bindUserService(args, conn)
-        log("Connecting...")
+    // ---- hidden app list ----
+
+    private fun refreshTasks() {
+        val d = Vd.displayId
+        if (d < 0 || Vd.service == null) {
+            tasksBox.removeAllViews()
+            tasksBox.addView(TextView(this).apply { text = "(no hidden display)" })
+            return
+        }
+        bg {
+            val list = Vd.tasks(d)
+            runOnUiThread { renderTasks(list) }
+        }
     }
 
-    private fun createDisplay() {
-        val s = svc() ?: return
-        bg {
-            val r = s.createDisplay(720, 1280, 320)
-            log("createDisplay: $r")
-            if (r.startsWith("OK:")) {
-                displayId = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (_: Throwable) { pkg }
+
+    private fun renderTasks(list: List<Pair<Int, String>>) {
+        tasksBox.removeAllViews()
+        if (list.isEmpty()) {
+            tasksBox.addView(TextView(this).apply { text = "(nothing running there yet)" })
+            return
+        }
+        for ((id, pkg) in list) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
             }
-            runOnUiThread { refresh() }
+            row.addView(TextView(this).apply { text = appLabel(pkg) }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(Button(this).apply {
+                text = "Stop"; isAllCaps = false
+                setOnClickListener {
+                    bg { log(Vd.exec("am force-stop $pkg")); Thread.sleep(800); runOnUiThread { refreshTasks() } }
+                }
+            })
+            row.addView(Button(this).apply {
+                text = "To main"; isAllCaps = false
+                setOnClickListener {
+                    bg { log(Vd.toMain(applicationContext, id, pkg)); Thread.sleep(800); runOnUiThread { refreshTasks() } }
+                }
+            })
+            tasksBox.addView(row)
         }
     }
 
-    private fun releaseDisplay() {
-        val s = svc() ?: return
-        bg {
-            log("release: ${s.releaseDisplay()}")
-            displayId = -1
-            runOnUiThread { refresh() }
-        }
-    }
-
-    private fun runCmd(cmd: String) {
-        val s = svc() ?: return
-        bg { log(s.exec(cmd)) }
-    }
-
-    private fun launchOn(display: Int, component: String) {
-        if (display < 0) { log("No hidden display yet. Do step 3."); return }
-        val s = svc() ?: return
-        bg { log("am start on $display:\n" + s.exec("am start --display $display -n $component")) }
-    }
+    // ---- launching ----
 
     private fun pickApp() {
         val pm = packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(intent, 0).sortedBy { it.loadLabel(pm).toString().lowercase() }
-        val labels = apps.map { it.loadLabel(pm).toString() }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("Launch on hidden display")
-            .setItems(labels) { _, which ->
-                val ai = apps[which].activityInfo
-                launchOn(displayId, ComponentName(ai.packageName, ai.name).flattenToShortString())
+        val apps = pm.queryIntentActivities(intent, 0)
+            .map { it.loadLabel(pm).toString() to it.activityInfo.packageName }
+            .distinctBy { it.second }
+            .sortedBy { it.first.lowercase() }
+        var shown = apps
+        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, shown.map { it.first }.toMutableList())
+        val list = ListView(this).apply { this.adapter = adapter }
+        val search = EditText(this).apply { hint = "Search apps" }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(search)
+            addView(list)
+        }
+        search.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                val q = s.toString().trim().lowercase()
+                shown = apps.filter { it.first.lowercase().contains(q) }
+                adapter.clear()
+                adapter.addAll(shown.map { it.first })
             }
-            .show()
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+        })
+        val dialog = AlertDialog.Builder(this).setTitle("Launch on hidden display").setView(box).show()
+        list.setOnItemClickListener { _, _, pos, _ ->
+            val pkg = shown[pos].second
+            dialog.dismiss()
+            bg {
+                if (Vd.ensureDisplay(applicationContext)) {
+                    log("Launch $pkg:\n" + Vd.launch(applicationContext, pkg))
+                    Thread.sleep(1500)
+                    runOnUiThread { refreshTasks() }
+                }
+            }
+        }
+    }
+
+    // ---- heartbeat diagnostics (from 0.1) ----
+
+    private fun heartbeatOn(display: Int) {
+        if (display < 0) { log("No hidden display yet."); return }
+        bg { log("am start on $display:\n" + Vd.exec("am start --display $display -n $packageName/.HeartbeatActivity")) }
     }
 
     private fun analyze(): String {
