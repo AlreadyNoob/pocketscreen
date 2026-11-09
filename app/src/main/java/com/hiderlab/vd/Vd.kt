@@ -116,8 +116,15 @@ object Vd {
     fun setFrozen(pkg: String, frozen: Boolean): String {
         val pids = pidsOf(pkg, true)
         if (pids.isEmpty()) return "$pkg isn't running."
-        val out = exec("kill -${if (frozen) "STOP" else "CONT"} ${pids.joinToString(" ")}").trim()
-        val ok = isFrozen(pkg) == frozen
+        val sig = if (frozen) "STOP" else "CONT"
+        var out = exec("kill -$sig ${pids.joinToString(" ")}").trim()
+        var ok = isFrozen(pkg) == frozen
+        if (!ok) {
+            // Works only if Shizuku runs as root.
+            val r = exec("su -c 'kill -$sig ${pids.joinToString(" ")}'").trim()
+            ok = isFrozen(pkg) == frozen
+            if (!ok) out = (out + "\n" + r).trim()
+        }
         return (if (ok) (if (frozen) "Frozen" else "Resumed") + " $pkg (${pids.size} process(es))."
         else "Could not ${if (frozen) "freeze" else "resume"} $pkg.") + if (out.isNotEmpty()) "\n$out" else ""
     }
@@ -149,7 +156,7 @@ object Vd {
      * that "mute this app" tools use). Returns the shell output for the log.
      */
     private fun applyAudio(pkg: String, muted: Boolean): String {
-        val set = exec("cmd appops set $pkg PLAY_AUDIO ${if (muted) "deny" else "default"}")
+        val set = exec("cmd appops set $pkg PLAY_AUDIO ${if (muted) "deny" else "allow"}")
         val now = exec("cmd appops get $pkg PLAY_AUDIO").trim()
         return (set.trim() + "\n" + now).trim()
     }
@@ -258,6 +265,10 @@ object Vd {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
             ?: return "No launcher activity for $pkg"
         if (isMuted(ctx, pkg)) applyAudio(pkg, true)
+        else if (Regex("(?i)deny|ignore").containsMatchIn(exec("cmd appops get $pkg PLAY_AUDIO"))) {
+            // A leftover mute from an earlier session: the app is not set to muted, so give its sound back.
+            log("Restoring sound for $pkg: " + applyAudio(pkg, false))
+        }
         // If it is already open on the main screen, try to move that task instead of starting a copy.
         val onMain = tasks(0).firstOrNull { it.second == pkg }
         if (onMain != null) {

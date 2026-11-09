@@ -338,8 +338,12 @@ class MainActivity : Activity() {
                     Ui.MenuItem("Open viewer") { openViewer(r.display.id) },
                     Ui.MenuItem(if (r.frozen) "Resume app" else "Freeze app") {
                         bg {
-                            log(Vd.setFrozen(r.pkg, !r.frozen))
-                            runOnUiThread { refreshTasks() }
+                            val res = Vd.setFrozen(r.pkg, !r.frozen)
+                            log(res)
+                            runOnUiThread {
+                                Toast.makeText(this, res.lines().take(2).joinToString("\n"), Toast.LENGTH_LONG).show()
+                                refreshTasks()
+                            }
                         }
                     },
                     Ui.MenuItem(if (muted) "Unmute sound" else "Mute sound") {
@@ -680,6 +684,9 @@ class MainActivity : Activity() {
             diag("Heartbeat control on main display") { heartbeatOn(0) }
             diag("Check heartbeat result") { log(analyze()) }
             diag("Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
+            diag("Show freeze-related shell commands") {
+                bg { log(Vd.exec("id; cmd activity help 2>&1 | grep -i -E 'freez|suspend|stop|kill'")) }
+            }
             diag("Resume all frozen apps") { bg { log(Vd.resumeAll()); runOnUiThread { refreshTasks() } } }
             diag("Give sound back to all muted apps") { bg { log(Vd.restoreAllAudio(applicationContext)) } }
             diag("Show where apps are") {
