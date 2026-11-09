@@ -172,11 +172,13 @@ class VdService : IVdService.Stub() {
         val out = p.inputStream.bufferedReader().readText()
         p.waitFor()
         val dispRe = Regex("^Display #(\\d+)")
-        val taskRe = Regex("Task\\{\\w+ #(\\d+) type=standard A=\\d+:([\\w.]+)")
+        val taskRe = Regex("^\\s*\\* Task\\{\\w+ #(\\d+) type=standard A=\\d+:([\\w.]+)")
         var cur = -1
         val res = LinkedHashMap<Int, String>()
         for (line in out.lineSequence()) {
-            dispRe.find(line)?.let { cur = it.groupValues[1].toInt() }
+            val m = dispRe.find(line)
+            if (m != null) cur = m.groupValues[1].toInt()
+            else if (line.isNotEmpty() && !line[0].isWhitespace()) cur = -1 // a new top-level section (recents etc.)
             if (cur == displayId) taskRe.find(line)?.let { res.putIfAbsent(it.groupValues[1].toInt(), it.groupValues[2]) }
         }
         res.entries.joinToString("\n") { "${it.key}|${it.value}" }

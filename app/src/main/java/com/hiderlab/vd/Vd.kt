@@ -120,9 +120,12 @@ object Vd {
 
     fun toMain(ctx: Context, taskId: Int, pkg: String): String {
         val r = exec("am display move-stack $taskId 0")
-        if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved to main. $r"
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
-            ?: return "move-stack failed and no launcher activity: $r"
+            ?: return "move-stack result: $r"
+        if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) {
+            // bring it to the front on the main screen
+            return "Moved to main. $r\n" + exec("am start --display 0 -n $comp")
+        }
         return "move-stack failed ($r)\n" + exec("am start --display 0 -n $comp")
     }
 
