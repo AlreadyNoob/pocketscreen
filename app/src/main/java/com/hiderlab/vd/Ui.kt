@@ -169,14 +169,25 @@ object Ui {
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(0, dp(a, 6), 0, dp(a, 6))
         box.background = shape(SURFACE2, dpf(a, 16f), OUTLINE, dp(a, 1))
+        box.clipToOutline = true
+        box.elevation = dpf(a, 8f)
         val pw = PopupWindow(box, dp(a, 244), ViewGroup.LayoutParams.WRAP_CONTENT, true)
         pw.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         pw.isOutsideTouchable = true
+        var first = true
         for (item in items) {
             val act = item.action
+            if (!first && act != null) {
+                val line = View(a)
+                line.setBackgroundColor(OUTLINE)
+                box.addView(line, LinearLayout.LayoutParams(-1, dp(a, 1)))
+            }
+            first = false
             val t = TextView(a)
             t.text = item.label
-            t.setPadding(dp(a, 18), dp(a, 13), dp(a, 18), dp(a, 13))
+            t.gravity = Gravity.CENTER_VERTICAL
+            t.minHeight = dp(a, 52)
+            t.setPadding(dp(a, 18), dp(a, 8), dp(a, 18), dp(a, 8))
             if (act == null) {
                 t.textSize = 12f
                 t.setTextColor(MUTED)
@@ -185,6 +196,7 @@ object Ui {
                 t.setTextColor(if (item.danger) DANGER_FG else TEXT)
                 t.background = withRipple(null, 0f)
                 t.isClickable = true
+                t.isFocusable = true
                 t.setOnClickListener { pw.dismiss(); act() }
             }
             box.addView(t, LinearLayout.LayoutParams(-1, -2))

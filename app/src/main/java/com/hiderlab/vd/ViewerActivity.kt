@@ -30,12 +30,14 @@ import android.window.OnBackInvokedDispatcher
 /**
  * Live view of one hidden display (pass its id as the "display" extra). Touches go to the
  * display, the phone's keyboard (or a physical one) types straight into the focused app.
- * Back gestures are swallowed; the arrow in the top bar is the only way out.
+ * Back gestures go to the app (or are ignored, per Settings); the arrow in the top bar is the way out.
  */
 class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private lateinit var sv: InputSurfaceView
     private var suppressKb = false
+    private var backControls = true
+    private var lastBack = 0L
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
     private lateinit var subView: TextView
@@ -101,11 +103,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         }
         window.setBackgroundDrawable(ColorDrawable(Color.BLACK))
 
-        // Swallow every kind of back gesture / button.
+        backControls = AppSettings.backGesture(this)
+        // Back gestures go to the app on the display (or are swallowed if turned off in Settings).
         if (Build.VERSION.SDK_INT >= 33) {
             onBackInvokedDispatcher.registerOnBackInvokedCallback(
                 OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                OnBackInvokedCallback { }
+                OnBackInvokedCallback { sendBack() }
             )
         }
 
@@ -280,11 +283,25 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
-        // Back is disabled here on purpose.
+        sendBack()
+    }
+
+    /** Back never closes the viewer; it is sent to the app on the display, or ignored if turned off. */
+    private fun sendBack() {
+        if (!backControls) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastBack < 200) return // the same gesture can arrive through two paths
+        lastBack = now
+        try {
+            Vd.service?.key(displayId, KeyEvent.KEYCODE_BACK, 0)
+        } catch (_: Throwable) {}
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode == KeyEvent.KEYCODE_BACK) return true
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) sendBack()
+            return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -332,6 +349,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         val w = v.width
         val h = v.height
         if (w <= 0 || h <= 0) return
+        // With back enabled the edge swipe must stay available, so don't exclude it.
+        if (backControls) { v.systemGestureExclusionRects = emptyList(); return }
         val edge = Ui.dp(this, 36)
         val strip = minOf(h, Ui.dp(this, 200))
         val top = (h - strip) / 2

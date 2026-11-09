@@ -32,6 +32,7 @@ class VdService : IVdService.Stub() {
         val id: Int,
         val w: Int,
         val h: Int,
+        val dpi: Int,
         val reader: ImageReader,
         val thread: HandlerThread,
         val dm: Any,
@@ -98,7 +99,7 @@ class VdService : IVdService.Stub() {
     override fun exec(cmd: String): String = run(cmd)
 
     override fun info(): String =
-        displays.values.sortedBy { it.id }.joinToString(";") { "${it.id},${it.w},${it.h}" } + "#" + lastError
+        displays.values.sortedBy { it.id }.joinToString(";") { "${it.id},${it.w},${it.h},${it.dpi}" } + "#" + lastError
 
     override fun setSurface(id: Int, s: Surface): String = try {
         swapSurface(id, s); "OK"
@@ -285,7 +286,7 @@ class VdService : IVdService.Stub() {
             if (m.parameterCount != 4) error("Unexpected signature: $m")
             val id = m.invoke(dmI, config, cbProxy, null, "com.android.shell") as Int
             if (id < 0) error("createVirtualDisplay returned $id")
-            return VD(id, w, h, reader, thread, dmI, cbProxy)
+            return VD(id, w, h, dpi, reader, thread, dmI, cbProxy)
         } catch (e: Throwable) {
             try { reader.close() } catch (_: Throwable) {}
             thread.quitSafely()
