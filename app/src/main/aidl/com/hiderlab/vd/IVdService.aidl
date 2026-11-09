@@ -17,4 +17,8 @@ interface IVdService {
     // lines of "taskId|package" for standard tasks on a display
     String tasksOn(int displayId) = 10;
     int rotation(int id) = 11;
+    // one raw key event (action = KeyEvent.ACTION_DOWN/UP) into the display
+    oneway void keyEvent(int id, int action, int keyCode, int meta) = 12;
+    // types text as key events (keeps shift/caps), for the on-screen keyboard
+    oneway void typeText(int id, String text) = 13;
 }

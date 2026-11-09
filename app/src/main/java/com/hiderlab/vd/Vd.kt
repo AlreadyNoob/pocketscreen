@@ -92,24 +92,12 @@ object Vd {
     /** Creates a display and returns its id, or -1 on failure. */
     fun createDisplay(ctx: Context, landscape: Boolean): Int {
         val s = service ?: run { log("Not connected"); return -1 }
-        val match = ctx.getSharedPreferences("hider", Context.MODE_PRIVATE).getBoolean("match", false)
-        var w: Int
-        var h: Int
-        var dpi = 320
-        if (match) {
-            val real = android.util.DisplayMetrics()
-            val d0 = (ctx.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager)
-                .getDisplay(android.view.Display.DEFAULT_DISPLAY)
-            @Suppress("DEPRECATION") d0.getRealMetrics(real)
-            w = minOf(real.widthPixels, real.heightPixels)
-            h = maxOf(real.widthPixels, real.heightPixels)
-            dpi = real.densityDpi
-        } else {
-            val dm = ctx.resources.displayMetrics
-            val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
-            w = 720
-            h = (w * ratio).toInt() and 1.inv()
-        }
+        // 720 px wide, same shape as the real screen, so apps lay out as they would on the phone.
+        val dm = ctx.resources.displayMetrics
+        val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
+        var w = 720
+        var h = (w * ratio).toInt() and 1.inv()
+        val dpi = 320
         if (landscape) { val t = w; w = h; h = t }
         val r = try { s.createDisplay(w, h, dpi) } catch (t: Throwable) { "ERR: $t" }
         log("createDisplay: $r")
@@ -140,16 +128,6 @@ object Vd {
             log("move-stack failed, starting fresh: $r")
         }
         return exec("am start --display $display -n $comp")
-    }
-
-    fun toMain(ctx: Context, taskId: Int, pkg: String): String {
-        val r = exec("am display move-stack $taskId 0")
-        val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
-            ?: return "move-stack result: $r"
-        if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) {
-            return "Moved to main. $r\n" + exec("am start --display 0 -n $comp")
-        }
-        return "move-stack failed ($r)\n" + exec("am start --display 0 -n $comp")
     }
 
     private fun stopHostIfIdle(ctx: Context) {

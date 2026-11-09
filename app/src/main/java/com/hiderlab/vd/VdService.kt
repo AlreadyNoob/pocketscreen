@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
@@ -141,6 +142,29 @@ class VdService : IVdService.Stub() {
         for (a in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
             val ev = KeyEvent(now, now, a, keyCode, 0, meta, -1, 0, 0, InputDevice.SOURCE_KEYBOARD)
             inject(ev, id)
+        }
+    }
+
+    override fun keyEvent(id: Int, action: Int, keyCode: Int, meta: Int) {
+        val now = SystemClock.uptimeMillis()
+        inject(KeyEvent(now, now, action, keyCode, 0, meta, -1, 0, 0, InputDevice.SOURCE_KEYBOARD), id)
+    }
+
+    override fun typeText(id: Int, text: String) {
+        val kcm = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
+        for (ch in text) {
+            val evs = kcm.getEvents(charArrayOf(ch))
+            if (evs != null) {
+                for (e in evs) {
+                    val now = SystemClock.uptimeMillis()
+                    inject(KeyEvent(now, now, e.action, e.keyCode, 0, e.metaState, -1, 0, 0, InputDevice.SOURCE_KEYBOARD), id)
+                }
+            } else {
+                // Not on the virtual keyboard layout (accents, symbols): send it as a raw character.
+                @Suppress("DEPRECATION")
+                val ev = KeyEvent(SystemClock.uptimeMillis(), ch.toString(), KeyCharacterMap.VIRTUAL_KEYBOARD, 0)
+                inject(ev, id)
+            }
         }
     }
 
