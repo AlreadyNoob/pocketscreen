@@ -16,6 +16,8 @@ object Vd {
         val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
     }
 
+    private const val LAUNCH_FLAGS = 0x10800000 // FLAG_ACTIVITY_NEW_TASK (0x10000000) | FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS (0x00800000)
+
     @Volatile var service: IVdService? = null
     @Volatile var displays: List<Disp> = emptyList()
     @Volatile var inputError = ""
@@ -127,7 +129,8 @@ object Vd {
             if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
-        return exec("am start --display $display -n $comp")
+        // -f = NEW_TASK | EXCLUDE_FROM_RECENTS, so the task is not listed in the phone's Recents.
+        return exec("am start --display $display -f $LAUNCH_FLAGS -n $comp")
     }
 
     private fun stopHostIfIdle(ctx: Context) {

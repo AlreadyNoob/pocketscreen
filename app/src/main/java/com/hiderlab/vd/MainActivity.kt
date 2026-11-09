@@ -2,12 +2,13 @@ package com.hiderlab.vd
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
-import android.content.pm.ActivityInfo
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.text.Editable
@@ -23,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import rikka.shizuku.Shizuku
 import java.io.File
 
@@ -46,6 +48,9 @@ class MainActivity : Activity() {
     private val permListener = Shizuku.OnRequestPermissionResultListener { _, result ->
         log("Permission: ${if (result == PackageManager.PERMISSION_GRANTED) "granted" else "denied"}")
         runOnUiThread { refresh() }
+    }
+    private val pkgReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) { Apps.load(applicationContext, force = true) }
     }
     private val binderListener = Shizuku.OnBinderReceivedListener { runOnUiThread { refresh() } }
     private val deadListener = Shizuku.OnBinderDeadListener { runOnUiThread { refresh() } }
@@ -150,6 +155,9 @@ class MainActivity : Activity() {
         diag("Show where apps are") {
             bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
         }
+        diag("Show Recents entries") {
+            bg { log(Vd.exec("dumpsys activity recents | grep -E 'Recent #|baseIntent|flg=' | head -40")) }
+        }
         diag("Show Hiber log for Hider Lab") {
             bg { log(Vd.exec("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")) }
         }
@@ -158,6 +166,17 @@ class MainActivity : Activity() {
         val v = Ui.text(this, "Hider Lab $version", 11f, Ui.MUTED)
         v.gravity = Gravity.CENTER
         Ui.add(root, v, top = 24)
+
+        // Load the app list and icons in the background now, so the picker opens instantly later.
+        Apps.load(applicationContext)
+        val pf = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(pkgReceiver, pf, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(pkgReceiver, pf)
 
         Vd.logSink = { log(it) }
         Vd.listeners.add(refreshRunnable)
@@ -187,6 +206,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(pkgReceiver) } catch (_: Throwable) {}
         Vd.listeners.remove(refreshRunnable)
         Vd.logSink = null
         Shizuku.removeBinderReceivedListener(binderListener)
@@ -315,16 +335,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun appLabel(pkg: String): String = try {
-        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
-    } catch (_: Throwable) { pkg }
-
-    private val icons = HashMap<String, Drawable?>()
-
-    private fun appIcon(pkg: String): Drawable? = icons.getOrPut(pkg) {
-        try { packageManager.getApplicationIcon(pkg) } catch (_: Throwable) { null }
-    }
-
     private fun renderTasks(list: List<Row>) {
         tasksBox.removeAllViews()
         if (list.isEmpty()) {
@@ -340,12 +350,14 @@ class MainActivity : Activity() {
             row.setOnClickListener { openViewer(r.display.id) }
 
             val icon = ImageView(this)
-            icon.setImageDrawable(appIcon(r.pkg))
+            icon.tag = r.pkg
+            val cached = Apps.icon(this, r.pkg) { b -> if (icon.tag == r.pkg) icon.setImageBitmap(b) }
+            if (cached != null) icon.setImageBitmap(cached)
             row.addView(icon, LinearLayout.LayoutParams(dp(44), dp(44)))
 
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
-            val name = Ui.text(this, appLabel(r.pkg), 15f, Ui.TEXT, bold = true)
+            val name = Ui.text(this, Apps.label(this, r.pkg), 15f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
@@ -367,18 +379,7 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- launching
 
-    private data class App(val label: String, val pkg: String)
-
     private fun pickApp() {
-        val pm = packageManager
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(intent, 0)
-            .map { App(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
-            .distinctBy { it.pkg }
-            .filter { it.pkg != packageName }
-            .sortedBy { it.label.lowercase() }
-        val shown = ArrayList(apps)
-
         Ui.sheet(this, 0.8f) { body, dlg ->
             body.addView(Ui.text(this, "Launch on a hidden display", 18f, Ui.TEXT, bold = true))
 
@@ -391,6 +392,11 @@ class MainActivity : Activity() {
             search.setPadding(dp(16), dp(12), dp(16), dp(12))
             search.background = Ui.shape(Ui.SURFACE2, Ui.dpf(this, 14f))
             Ui.add(body, search, top = 12)
+
+            val shown = ArrayList<Apps.App>()
+            val note = Ui.text(this, "Loading apps…", 13f, Ui.MUTED)
+            note.setPadding(dp(4), dp(12), dp(4), dp(4))
+            Ui.add(body, note, top = 4)
 
             val adapter = object : BaseAdapter() {
                 override fun getCount() = shown.size
@@ -410,7 +416,10 @@ class MainActivity : Activity() {
                         it.addView(tv, lp)
                     }
                     val a = shown[position]
-                    (row.getChildAt(0) as ImageView).setImageDrawable(appIcon(a.pkg))
+                    val iv = row.getChildAt(0) as ImageView
+                    iv.tag = a.pkg
+                    val cached = Apps.icon(this@MainActivity, a.pkg) { b -> if (iv.tag == a.pkg) iv.setImageBitmap(b) }
+                    if (cached != null) iv.setImageBitmap(cached) else iv.setImageDrawable(null)
                     (row.getChildAt(1) as TextView).text = a.label
                     return row
                 }
@@ -427,33 +436,29 @@ class MainActivity : Activity() {
             }
             Ui.add(body, list, top = 8, h = 0, weight = 1f)
 
+            fun applyFilter() {
+                val q = search.text.toString().trim().lowercase()
+                val all = Apps.list
+                shown.clear()
+                shown.addAll(if (q.isEmpty()) all else all.filter { it.key.contains(q) })
+                adapter.notifyDataSetChanged()
+                note.text = if (!Apps.ready) "Loading apps…" else "No apps found"
+                note.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
+            }
+            applyFilter()
+            // Already loaded in the background in the normal case; this only waits on a slow first load.
+            Apps.load(applicationContext) { if (dlg.isShowing) applyFilter() }
+
             search.addTextChangedListener(object : TextWatcher {
-                override fun afterTextChanged(s: Editable?) {
-                    val q = s.toString().trim().lowercase()
-                    shown.clear()
-                    shown.addAll(apps.filter { it.label.lowercase().contains(q) })
-                    adapter.notifyDataSetChanged()
-                }
+                override fun afterTextChanged(s: Editable?) = applyFilter()
                 override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
                 override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
             })
         }
     }
 
-    /** Reads the orientation an app declares in its manifest: true = landscape, false = portrait, null = unknown. */
-    private fun declaredLandscape(pkg: String): Boolean? = try {
-        val comp = packageManager.getLaunchIntentForPackage(pkg)?.component
-        if (comp == null) null else when (packageManager.getActivityInfo(comp, 0).screenOrientation) {
-            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
-            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE -> true
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT,
-            ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT, ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT -> false
-            else -> null
-        }
-    } catch (_: Throwable) { null }
-
-    private fun askOrientation(a: App) {
-        val suggest = declaredLandscape(a.pkg)
+    private fun askOrientation(a: Apps.App) {
+        val suggest = a.landscape
         Ui.sheet(this) { body, dlg ->
             body.addView(Ui.text(this, a.label, 18f, Ui.TEXT, bold = true))
             Ui.add(body, Ui.text(this, "Which hidden display should it run on?", 13f, Ui.MUTED), top = 2)
@@ -487,11 +492,15 @@ class MainActivity : Activity() {
     }
 
     private fun launchApp(pkg: String, landscape: Boolean) {
+        Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show()
         bg {
             val id = Vd.ensureDisplay(applicationContext, landscape)
             if (id >= 0) {
                 log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
-                Thread.sleep(1500)
+                // Refresh twice so the app shows up as soon as it exists.
+                Thread.sleep(600)
+                runOnUiThread { refresh() }
+                Thread.sleep(900)
                 runOnUiThread { refresh() }
             }
         }

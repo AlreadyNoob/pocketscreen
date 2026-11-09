@@ -46,6 +46,10 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var rot = 0
     private var touches = 0
     private var kbVisible = false
+    private var startedHidden = false
+    private var kbToggledByUser = false
+    private var imeHeight = 0
+    private var lastTapFrac = 0.5f   // where on the display (0 top .. 1 bottom) you last touched
     private val ui = Handler(Looper.getMainLooper())
 
     private val poll = object : Runnable {
@@ -107,9 +111,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.BLACK)
-        Ui.applyInsets(root, ime = true) { visible ->
+        // The keyboard overlays the display instead of resizing it; the display is panned instead.
+        Ui.applyInsets(root, ime = false) { visible, height ->
             kbVisible = visible
+            imeHeight = height
             if (::kbIcon.isInitialized) kbIcon.tint = if (visible) Ui.ACCENT else Ui.TEXT
+            if (::sv.isInitialized) updatePan()
         }
 
         // ---- top bar: back arrow, title, keyboard toggle ----
@@ -147,7 +154,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         sv.sink = this
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
-        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
+        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(); updatePan() }
         sv.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> updateGestureExclusion(v) }
 
         sv.holder.setFixedSize(dw, dh)
@@ -182,6 +189,10 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             else -> { x = bx; y = by }
         }
         touches++
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
+            lastTapFrac = (e.y / v.height).coerceIn(0f, 1f)
+            if (kbVisible) updatePan()
+        }
         try { Vd.service?.touch(displayId, action, x, y) } catch (_: Throwable) {}
         return true
     }
@@ -197,6 +208,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     }
 
     private fun toggleKeyboard() {
+        kbToggledByUser = true
         val imm = getSystemService(InputMethodManager::class.java)
         if (kbVisible) {
             imm.hideSoftInputFromWindow(sv.windowToken, 0)
@@ -210,7 +222,35 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private fun setKb(on: Boolean) {
         kbVisible = on
+        if (on && imeHeight == 0) imeHeight = (box.rootView.height * 0.4f).toInt() // API < 30 can't report it
         kbIcon.tint = if (on) Ui.ACCENT else Ui.TEXT
+        updatePan()
+    }
+
+    /**
+     * With the keyboard open, slides the display up just far enough that the spot you last
+     * touched (normally the text field) stays above the keyboard. The display keeps its size.
+     */
+    private fun updatePan() {
+        if (!::box.isInitialized || sv.height <= 0) return
+        var shift = 0f
+        if (kbVisible && imeHeight > 0) {
+            val loc = IntArray(2)
+            box.getLocationOnScreen(loc)
+            val boxBottom = loc[1] + box.height
+            val kbTop = box.rootView.height - imeHeight
+            val covered = (boxBottom - kbTop).coerceAtLeast(0)          // part of the box under the keyboard
+            if (covered > 0) {
+                val tapY = sv.top + sv.height * lastTapFrac               // in box coordinates
+                val visible = box.height - covered
+                val margin = Ui.dp(this, 48)
+                shift = (tapY - (visible - margin)).coerceIn(0f, covered.toFloat())
+                // never slide the display's bottom edge above the keyboard
+                val svBottomGap = (box.height - (sv.top + sv.height)).coerceAtLeast(0)
+                shift = shift.coerceAtMost((covered - svBottomGap).coerceAtLeast(0).toFloat())
+            }
+        }
+        sv.animate().translationY(-shift).setDuration(150).start()
     }
 
     // ---- leaving: only via the arrow ----
@@ -254,7 +294,21 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) immersive()
+        if (hasFocus) {
+            immersive()
+            if (!startedHidden) {
+                // The display is a text editor so typing works, which makes Android want to pop the
+                // keyboard up when the viewer opens. Keep it closed until the keyboard icon is tapped.
+                startedHidden = true
+                hideKeyboard()
+                ui.postDelayed({ if (!kbToggledByUser) hideKeyboard() }, 250)
+            }
+        }
+    }
+
+    private fun hideKeyboard() {
+        getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(sv.windowToken, 0)
+        if (Build.VERSION.SDK_INT >= 30) window.insetsController?.hide(WindowInsets.Type.ime())
     }
 
     /** Asks Android not to start the system back gesture from the display's left and right edges. */

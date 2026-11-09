@@ -142,14 +142,14 @@ object Ui {
     }
 
     /** Pads [v] by the system bars / cutout (and optionally the keyboard) so content is never covered. */
-    fun applyInsets(v: View, ime: Boolean = false, onIme: ((Boolean) -> Unit)? = null) {
+    fun applyInsets(v: View, ime: Boolean = false, onIme: ((visible: Boolean, height: Int) -> Unit)? = null) {
         v.setOnApplyWindowInsetsListener { view, ins ->
             if (Build.VERSION.SDK_INT >= 30) {
                 var types = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
                 if (ime) types = types or WindowInsets.Type.ime()
                 val i = ins.getInsets(types)
                 view.setPadding(i.left, i.top, i.right, i.bottom)
-                onIme?.invoke(ins.isVisible(WindowInsets.Type.ime()))
+                onIme?.invoke(ins.isVisible(WindowInsets.Type.ime()), ins.getInsets(WindowInsets.Type.ime()).bottom)
             } else {
                 view.setPadding(
                     ins.systemWindowInsetLeft, ins.systemWindowInsetTop,
