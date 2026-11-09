@@ -167,6 +167,16 @@ class VdService : IVdService.Stub() {
         }
     }
 
+    override fun rotation(): Int = try {
+        val c = Class.forName("android.hardware.display.DisplayManagerGlobal")
+        val g = c.getMethod("getInstance").invoke(null)
+        val d = c.getMethod("getRealDisplay", Int::class.javaPrimitiveType).invoke(g, displayId) as android.view.Display
+        d.rotation
+    } catch (t: Throwable) {
+        if (lastError.isEmpty()) lastError = "rotation: " + unwrap(t).toString().take(150)
+        0
+    }
+
     override fun tasksOn(displayId: Int): String = try {
         val p = ProcessBuilder("sh", "-c", "dumpsys activity activities").redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText()

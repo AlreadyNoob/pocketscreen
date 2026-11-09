@@ -18,4 +18,6 @@ interface IVdService {
     oneway void key(int keyCode, int meta) = 9;
     // lines of "taskId|package" for standard tasks on a display
     String tasksOn(int displayId) = 10;
+    // Surface.ROTATION_* of the hidden display
+    int rotation() = 11;
 }

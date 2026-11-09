@@ -29,6 +29,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
     private var dw = 720
     private var dh = 1280
     private lateinit var input: EditText
+    private lateinit var box: FrameLayout
+    private var rot = 0
     private lateinit var statusLine: TextView
     private val ui = Handler(Looper.getMainLooper())
     private var touches = 0
@@ -36,12 +38,14 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         override fun run() {
             Thread {
                 Vd.refreshInfo()
+                val r = try { Vd.service?.rotation() ?: 0 } catch (_: Throwable) { 0 }
                 ui.post {
-                    statusLine.text = "display #${Vd.displayId}  touches sent: $touches  " +
+                    if (r != rot) { rot = r; fit() }
+                    statusLine.text = "display #${Vd.displayId}  rot=$rot  touches sent: $touches  " +
                         (if (Vd.inputError.isEmpty()) "input: ok" else "input ERROR: ${Vd.inputError}")
                 }
             }.start()
-            ui.postDelayed(this, 2000)
+            ui.postDelayed(this, 1000)
         }
     }
 
@@ -60,25 +64,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
             fitsSystemWindows = true
             setBackgroundColor(Color.BLACK)
         }
-        val box = FrameLayout(this)
+        box = FrameLayout(this)
         sv = SurfaceView(this)
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        box.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
-            val cw = r - l
-            val ch = b - t
-            if (cw <= 0 || ch <= 0) return@addOnLayoutChangeListener
-            val sc = minOf(cw.toFloat() / dw, ch.toFloat() / dh)
-            val nw = (dw * sc).toInt()
-            val nh = (dh * sc).toInt()
-            val lp = sv.layoutParams
-            if (lp.width != nw || lp.height != nh) {
-                lp.width = nw
-                lp.height = nh
-                sv.layoutParams = lp
-            }
-        }
+        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
 
         sv.holder.setFixedSize(dw, dh)
         sv.holder.addCallback(this)
@@ -90,8 +81,17 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
                 MotionEvent.ACTION_CANCEL -> MotionEvent.ACTION_CANCEL
                 else -> return@setOnTouchListener true
             }
-            val x = (e.x * dw / v.width).coerceIn(0f, (dw - 1).toFloat())
-            val y = (e.y * dh / v.height).coerceIn(0f, (dh - 1).toFloat())
+            val bx = (e.x * dw / v.width).coerceIn(0f, (dw - 1).toFloat())
+            val by = (e.y * dh / v.height).coerceIn(0f, (dh - 1).toFloat())
+            // buffer coordinates -> the display's rotated (logical) coordinates
+            val x: Float
+            val y: Float
+            when (rot) {
+                1 -> { x = by; y = dw - 1 - bx }
+                3 -> { x = dh - 1 - by; y = bx }
+                2 -> { x = dw - 1 - bx; y = dh - 1 - by }
+                else -> { x = bx; y = by }
+            }
             touches++
             try { Vd.service?.touch(action, x, y) } catch (_: Throwable) {}
             true
@@ -144,6 +144,25 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         root.addView(row)
 
         setContentView(root)
+    }
+
+    private fun fit() {
+        val cw = box.width
+        val ch = box.height
+        if (cw <= 0 || ch <= 0) return
+        val land = rot == 1 || rot == 3
+        val vw = if (land) dh else dw
+        val vh = if (land) dw else dh
+        val sc = minOf(cw.toFloat() / vw, ch.toFloat() / vh)
+        val nw = (dw * sc).toInt()
+        val nh = (dh * sc).toInt()
+        val lp = sv.layoutParams
+        if (lp.width != nw || lp.height != nh) {
+            lp.width = nw
+            lp.height = nh
+            sv.layoutParams = lp
+        }
+        sv.rotation = when (rot) { 1 -> -90f; 3 -> 90f; 2 -> 180f; else -> 0f }
     }
 
     private fun sendText(enter: Boolean) {
