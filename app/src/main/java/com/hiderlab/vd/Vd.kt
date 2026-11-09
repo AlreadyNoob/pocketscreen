@@ -193,6 +193,8 @@ object Vd {
                 if (name in pkgs) cpuByPkg[name] = (cpuByPkg[name] ?: 0.0) + (m.groupValues[1].toDoubleOrNull() ?: 0.0)
             }
         } catch (_: Throwable) {}
+        // dumpsys cpuinfo counts one full core as 100%, so 130% means 1.3 cores. Show share of the whole CPU.
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val res = HashMap<String, Stat>()
         for (pkg in pkgs) {
             var mem: Int? = null
@@ -201,7 +203,7 @@ object Vd {
                 val m = Regex("TOTAL PSS:\\s+(\\d+)").find(out) ?: Regex("(?m)^\\s*TOTAL\\s+(\\d+)").find(out)
                 mem = m?.groupValues?.get(1)?.toLongOrNull()?.let { (it / 1024).toInt() }
             } catch (_: Throwable) {}
-            res[pkg] = Stat(mem, cpuByPkg[pkg])
+            res[pkg] = Stat(mem, cpuByPkg[pkg]?.let { (it / cores).coerceAtMost(100.0) })
         }
         return res
     }
