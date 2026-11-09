@@ -68,13 +68,14 @@ object Ui {
     fun applyTheme(ctx: Context) {
         val night = isNight(ctx)
         val dyn = Build.VERSION.SDK_INT >= 31 && AppSettings.dynamicColor(ctx)
-        setPalette(night, dyn, if (dyn) ctx else null)
+        try { setPalette(night, dyn, if (dyn) ctx else null) }
+        catch (_: Throwable) { setPalette(night, false, null) } // system colors missing on this device
         themeKey = key(ctx)
     }
 
     private fun key(ctx: Context): String {
         val dyn = Build.VERSION.SDK_INT >= 31 && AppSettings.dynamicColor(ctx)
-        val acc = if (dyn) sysColor(ctx, android.R.color.system_accent1_600) else 0
+        val acc = if (dyn) try { sysColor(ctx, android.R.color.system_accent1_600) } catch (_: Throwable) { 0 } else 0
         return "${isNight(ctx)}|$dyn|$acc"
     }
 
@@ -117,6 +118,11 @@ object Ui {
     /** Status/navigation bar icons that stay readable on the current background. */
     @Suppress("DEPRECATION")
     fun styleSystemBars(a: Activity) {
+        try { styleBars(a) } catch (_: Throwable) {}
+    }
+
+    @Suppress("DEPRECATION")
+    private fun styleBars(a: Activity) {
         val w = a.window
         w.statusBarColor = Color.TRANSPARENT
         w.navigationBarColor = Color.TRANSPARENT

@@ -69,7 +69,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Ui.applyTheme(this)
-        Ui.styleSystemBars(this)
         window.setBackgroundDrawable(ColorDrawable(Ui.BG))
 
         val frame = FrameLayout(this)
@@ -87,6 +86,7 @@ class MainActivity : Activity() {
         scroll.addView(root)
         frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         setContentView(frame)
+        Ui.styleSystemBars(this)
 
         // header: large title, overflow menu, status chips
         val head = LinearLayout(this)
