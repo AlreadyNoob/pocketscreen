@@ -283,7 +283,7 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- app list
 
-    private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String)
+    private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String, val frozen: Boolean)
 
     private fun refreshTasks() {
         val disp = Vd.displays
@@ -293,7 +293,7 @@ class MainActivity : Activity() {
             return
         }
         bg {
-            val rows = disp.flatMap { d -> Vd.tasks(d.id).map { Row(d, it.first, it.second) } }
+            val rows = disp.flatMap { d -> Vd.tasks(d.id).map { Row(d, it.first, it.second, Vd.isFrozen(it.second)) } }
             runOnUiThread { renderTasks(rows) }
         }
     }
@@ -324,7 +324,8 @@ class MainActivity : Activity() {
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
-            col.addView(Ui.text(this, "Display #${r.display.id} · ${if (r.display.landscape) "Landscape" else "Portrait"}", 12f, Ui.MUTED))
+            val muted = Vd.isMuted(this, r.pkg)
+            col.addView(Ui.text(this, "Display #${r.display.id} · ${if (r.display.landscape) "Landscape" else "Portrait"}" + (if (r.frozen) " · Frozen" else "") + (if (muted) " · Muted" else ""), 12f, Ui.MUTED))
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(12)
             row.addView(col, cp)
@@ -335,9 +336,22 @@ class MainActivity : Activity() {
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("Open viewer") { openViewer(r.display.id) },
+                    Ui.MenuItem(if (r.frozen) "Resume app" else "Freeze app") {
+                        bg {
+                            log(Vd.setFrozen(r.pkg, !r.frozen))
+                            runOnUiThread { refreshTasks() }
+                        }
+                    },
+                    Ui.MenuItem(if (muted) "Unmute sound" else "Mute sound") {
+                        bg {
+                            log("${if (muted) "Unmute" else "Mute"} ${Apps.label(applicationContext, r.pkg)}:\n" +
+                                Vd.setMuted(applicationContext, r.pkg, !muted))
+                            runOnUiThread { refreshTasks() }
+                        }
+                    },
                     Ui.MenuItem("Stop app", danger = true) {
                         bg {
-                            log(Vd.exec("am force-stop ${r.pkg}"))
+                            log(Vd.stopApp(applicationContext, r.pkg))
                             Thread.sleep(800)
                             runOnUiThread { refreshTasks() }
                         }
@@ -464,6 +478,16 @@ class MainActivity : Activity() {
             Ui.add(body, Ui.button(this, "Size ${p.first}×${p.second} / ${l.first}×${l.second}  ·  Change", Ui.Kind.TEXT) {
                 dlg.dismiss(); showDisplaySettings()
             }, top = 8)
+            val soundBtn = Ui.button(this, "", Ui.Kind.TEXT) {}
+            fun styleSound() {
+                soundBtn.text = if (Vd.isMuted(this, a.pkg)) "Sound: muted  ·  Unmute" else "Sound: on  ·  Mute"
+            }
+            soundBtn.setOnClickListener {
+                Vd.setMutedPref(this, a.pkg, !Vd.isMuted(this, a.pkg))
+                styleSound()
+            }
+            styleSound()
+            Ui.add(body, soundBtn, top = 0)
             Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 0)
         }
     }
@@ -656,6 +680,8 @@ class MainActivity : Activity() {
             diag("Heartbeat control on main display") { heartbeatOn(0) }
             diag("Check heartbeat result") { log(analyze()) }
             diag("Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
+            diag("Resume all frozen apps") { bg { log(Vd.resumeAll()); runOnUiThread { refreshTasks() } } }
+            diag("Give sound back to all muted apps") { bg { log(Vd.restoreAllAudio(applicationContext)) } }
             diag("Show where apps are") {
                 bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
             }

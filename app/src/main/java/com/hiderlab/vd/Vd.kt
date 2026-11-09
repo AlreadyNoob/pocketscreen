@@ -91,6 +91,96 @@ object Vd {
         }
     }
 
+    // ---- freeze / resume ----
+
+    /** Main process of the app, or empty if it isn't running. */
+    private fun pidsOf(pkg: String, all: Boolean): List<Int> {
+        if (!all) return exec("pidof $pkg").trim().split(" ").mapNotNull { it.toIntOrNull() }.take(1)
+        return exec("ps -A -o PID,NAME").lines().mapNotNull { l ->
+            val p = l.trim().split(Regex("\\s+"), limit = 2)
+            if (p.size == 2 && (p[1] == pkg || p[1].startsWith("$pkg:"))) p[0].toIntOrNull() else null
+        }
+    }
+
+    private fun stateOf(pid: Int): Char? =
+        exec("grep -m1 State: /proc/$pid/status").trim().removePrefix("State:").trim().firstOrNull()
+
+    /** True when the app's main process is stopped (state T). */
+    fun isFrozen(pkg: String): Boolean = pidsOf(pkg, false).firstOrNull()?.let { stateOf(it) == 'T' } ?: false
+
+    /**
+     * Pauses (SIGSTOP) or continues (SIGCONT) every process of the app. The app stays in memory
+     * with its state intact; it just gets no CPU time, so it makes no sound and uses no battery.
+     * Returns a log line saying what happened.
+     */
+    fun setFrozen(pkg: String, frozen: Boolean): String {
+        val pids = pidsOf(pkg, true)
+        if (pids.isEmpty()) return "$pkg isn't running."
+        val out = exec("kill -${if (frozen) "STOP" else "CONT"} ${pids.joinToString(" ")}").trim()
+        val ok = isFrozen(pkg) == frozen
+        return (if (ok) (if (frozen) "Frozen" else "Resumed") + " $pkg (${pids.size} process(es))."
+        else "Could not ${if (frozen) "freeze" else "resume"} $pkg.") + if (out.isNotEmpty()) "\n$out" else ""
+    }
+
+    /** Resumes every frozen app on the hidden displays. */
+    fun resumeAll(): String {
+        val pkgs = displays.flatMap { d -> tasks(d.id).map { it.second } }.distinct().filter { isFrozen(it) }
+        return if (pkgs.isEmpty()) "No frozen apps." else pkgs.joinToString("\n") { setFrozen(it, false) }
+    }
+
+    // ---- per-app mute ----
+
+    private fun mutePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("mute", Context.MODE_PRIVATE)
+
+    /** Apps the user wants muted whenever they run on a hidden display. Saved on the phone. */
+    fun mutedApps(ctx: Context): Set<String> = mutePrefs(ctx).getStringSet("pkgs", emptySet()) ?: emptySet()
+
+    fun isMuted(ctx: Context, pkg: String): Boolean = pkg in mutedApps(ctx)
+
+    /** Remembers the choice only. It is applied to the app the next time it is launched. */
+    fun setMutedPref(ctx: Context, pkg: String, muted: Boolean) {
+        val s = HashSet(mutedApps(ctx))
+        if (muted) s.add(pkg) else s.remove(pkg)
+        mutePrefs(ctx).edit().putStringSet("pkgs", s).apply()
+    }
+
+    /**
+     * Turns the app's sound off or on right now, using the PLAY_AUDIO app-op (the same switch
+     * that "mute this app" tools use). Returns the shell output for the log.
+     */
+    private fun applyAudio(pkg: String, muted: Boolean): String {
+        val set = exec("cmd appops set $pkg PLAY_AUDIO ${if (muted) "deny" else "default"}")
+        val now = exec("cmd appops get $pkg PLAY_AUDIO").trim()
+        return (set.trim() + "\n" + now).trim()
+    }
+
+    /** Saves the choice and applies it to the running app. */
+    fun setMuted(ctx: Context, pkg: String, muted: Boolean): String {
+        setMutedPref(ctx, pkg, muted)
+        return applyAudio(pkg, muted)
+    }
+
+    /**
+     * The mute is a system-wide setting for the app, so when the app stops running here we hand its
+     * sound back; otherwise it would stay silent on the main screen too. The choice itself is kept
+     * and is applied again on the next launch.
+     */
+    private fun restoreAudio(ctx: Context, pkg: String) {
+        if (isMuted(ctx, pkg)) applyAudio(pkg, false)
+    }
+
+    /** Gives sound back to every app that is set to muted. The saved choices stay. */
+    fun restoreAllAudio(ctx: Context): String =
+        mutedApps(ctx).joinToString("\n") { "$it: " + applyAudio(it, false).lines().lastOrNull().orEmpty() }
+            .ifEmpty { "No muted apps." }
+
+    /** Force-stops an app and returns its sound to normal. */
+    fun stopApp(ctx: Context, pkg: String): String {
+        val r = exec("am force-stop $pkg")
+        restoreAudio(ctx, pkg)
+        return r
+    }
+
     // ---- display size settings ----
 
     /** How big new hidden displays are. Saved on the phone, applies to displays created from now on. */
@@ -167,6 +257,7 @@ object Vd {
     fun launch(ctx: Context, pkg: String, display: Int): String {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
             ?: return "No launcher activity for $pkg"
+        if (isMuted(ctx, pkg)) applyAudio(pkg, true)
         // If it is already open on the main screen, try to move that task instead of starting a copy.
         val onMain = tasks(0).firstOrNull { it.second == pkg }
         if (onMain != null) {
@@ -186,7 +277,7 @@ object Vd {
 
     /** Force-stops the apps on one display, then removes it. */
     fun destroyDisplay(ctx: Context, id: Int) {
-        tasks(id).map { it.second }.distinct().forEach { exec("am force-stop $it") }
+        tasks(id).map { it.second }.distinct().forEach { stopApp(ctx, it) }
         try { service?.releaseDisplay(id) } catch (_: Throwable) {}
         refreshInfo()
         stopHostIfIdle(ctx)
