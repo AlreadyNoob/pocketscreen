@@ -11,10 +11,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** App-side connection to the Shizuku service. Shared by the UI, viewer and notification. */
 object Vd {
+    data class Disp(val id: Int, val w: Int, val h: Int) {
+        val landscape: Boolean get() = w > h
+        val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
+    }
+
     @Volatile var service: IVdService? = null
-    @Volatile var displayId = -1
-    @Volatile var width = 0
-    @Volatile var height = 0
+    @Volatile var displays: List<Disp> = emptyList()
     @Volatile var inputError = ""
     @Volatile private var binding = false
 
@@ -34,7 +37,7 @@ object Vd {
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
             binding = false
-            displayId = -1
+            displays = emptyList()
             log("Service disconnected")
             changed()
         }
@@ -57,15 +60,21 @@ object Vd {
         log("Connecting...")
     }
 
-    /** Reads display id/size from the service (it may already have a display from an earlier session). */
+    fun display(id: Int): Disp? = displays.firstOrNull { it.id == id }
+
+    /** Reads the display list from the service (it may already have displays from an earlier session). */
     fun refreshInfo() {
         val s = service ?: return
         try {
-            val p = s.info().split(",", limit = 4)
-            displayId = p.getOrNull(0)?.toIntOrNull() ?: -1
-            width = p.getOrNull(1)?.toIntOrNull() ?: 0
-            height = p.getOrNull(2)?.toIntOrNull() ?: 0
-            inputError = p.getOrNull(3) ?: ""
+            val parts = s.info().split("#", limit = 2)
+            displays = parts[0].split(";").mapNotNull {
+                val p = it.split(",")
+                if (p.size == 3) {
+                    val id = p[0].toIntOrNull(); val w = p[1].toIntOrNull(); val h = p[2].toIntOrNull()
+                    if (id != null && w != null && h != null) Disp(id, w, h) else null
+                } else null
+            }
+            inputError = parts.getOrElse(1) { "" }
         } catch (t: Throwable) { log("info failed: $t") }
     }
 
@@ -80,9 +89,9 @@ object Vd {
         }
     }
 
-    fun createDisplay(ctx: Context): String {
-        val s = service ?: return "Not connected"
-        if (displayId >= 0) return "Display #$displayId already exists"
+    /** Creates a display and returns its id, or -1 on failure. */
+    fun createDisplay(ctx: Context, landscape: Boolean): Int {
+        val s = service ?: run { log("Not connected"); return -1 }
         val match = ctx.getSharedPreferences("hider", Context.MODE_PRIVATE).getBoolean("match", false)
         var w: Int
         var h: Int
@@ -101,38 +110,36 @@ object Vd {
             w = 720
             h = (w * ratio).toInt() and 1.inv()
         }
-        if (ctx.getSharedPreferences("hider", Context.MODE_PRIVATE).getBoolean("land", false)) {
-            val t = w; w = h; h = t
-        }
+        if (landscape) { val t = w; w = h; h = t }
         val r = try { s.createDisplay(w, h, dpi) } catch (t: Throwable) { "ERR: $t" }
+        log("createDisplay: $r")
+        var id = -1
         if (r.startsWith("OK:")) {
+            id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
             refreshInfo()
             try {
                 ctx.applicationContext.startForegroundService(Intent(ctx.applicationContext, HostService::class.java))
             } catch (t: Throwable) { log("Notification service not started: $t") }
         }
         changed()
-        return "createDisplay: $r"
+        return id
     }
 
-    fun ensureDisplay(ctx: Context): Boolean {
-        if (displayId >= 0) return true
-        log(createDisplay(ctx))
-        return displayId >= 0
-    }
+    /** Finds a display of the wanted orientation, or creates one. Returns its id, or -1. */
+    fun ensureDisplay(ctx: Context, landscape: Boolean): Int =
+        displays.firstOrNull { it.landscape == landscape }?.id ?: createDisplay(ctx, landscape)
 
-    fun launch(ctx: Context, pkg: String): String {
-        val s = service ?: return "Not connected"
+    fun launch(ctx: Context, pkg: String, display: Int): String {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
             ?: return "No launcher activity for $pkg"
         // If it is already open on the main screen, try to move that task instead of starting a copy.
         val onMain = tasks(0).firstOrNull { it.second == pkg }
         if (onMain != null) {
-            val r = exec("am display move-stack ${onMain.first} $displayId")
-            if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $displayId. $r"
+            val r = exec("am display move-stack ${onMain.first} $display")
+            if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
-        return exec("am start --display $displayId -n $comp")
+        return exec("am start --display $display -n $comp")
     }
 
     fun toMain(ctx: Context, taskId: Int, pkg: String): String {
@@ -140,22 +147,30 @@ object Vd {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
             ?: return "move-stack result: $r"
         if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) {
-            // bring it to the front on the main screen
             return "Moved to main. $r\n" + exec("am start --display 0 -n $comp")
         }
         return "move-stack failed ($r)\n" + exec("am start --display 0 -n $comp")
     }
 
-    /** Force-stops every app on the hidden display, then removes the display. */
-    fun stopAll(ctx: Context) {
-        val d = displayId
-        if (d >= 0) {
-            tasks(d).map { it.second }.distinct().forEach { exec("am force-stop $it") }
-            try { service?.releaseDisplay() } catch (_: Throwable) {}
+    private fun stopHostIfIdle(ctx: Context) {
+        if (displays.isEmpty()) {
+            try { ctx.applicationContext.stopService(Intent(ctx.applicationContext, HostService::class.java)) } catch (_: Throwable) {}
         }
-        displayId = -1
-        width = 0; height = 0
-        try { ctx.applicationContext.stopService(Intent(ctx.applicationContext, HostService::class.java)) } catch (_: Throwable) {}
+    }
+
+    /** Force-stops the apps on one display, then removes it. */
+    fun destroyDisplay(ctx: Context, id: Int) {
+        tasks(id).map { it.second }.distinct().forEach { exec("am force-stop $it") }
+        try { service?.releaseDisplay(id) } catch (_: Throwable) {}
+        refreshInfo()
+        stopHostIfIdle(ctx)
+        changed()
+    }
+
+    fun stopAll(ctx: Context) {
+        displays.map { it.id }.forEach { destroyDisplay(ctx, it) }
+        displays = emptyList()
+        stopHostIfIdle(ctx)
         changed()
     }
 }

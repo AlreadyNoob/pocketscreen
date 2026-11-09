@@ -3,7 +3,6 @@ package com.hiderlab.vd
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -27,13 +26,12 @@ class MainActivity : Activity() {
 
     private lateinit var statusView: TextView
     private lateinit var logView: TextView
+    private lateinit var displaysBox: LinearLayout
     private lateinit var tasksBox: LinearLayout
     private lateinit var btnGrant: Button
     private lateinit var btnConnect: Button
-    private lateinit var btnCreate: Button
     private lateinit var btnLaunch: Button
-    private lateinit var btnViewer: Button
-    private lateinit var btnDestroy: Button
+    private lateinit var btnStopAll: Button
 
     private val refreshRunnable = Runnable { runOnUiThread { refresh() } }
 
@@ -78,33 +76,26 @@ class MainActivity : Activity() {
         btnGrant = button(root, "1. Grant Shizuku permission") { grant() }
         btnConnect = button(root, "2. Connect service") { Vd.connect(applicationContext, force = true) }
         root.addView(CheckBox(this).apply {
-            text = "Match main screen size (fewer app restarts on To main, more battery)"
+            text = "Match main screen size (more battery, sharper preview)"
             isChecked = getSharedPreferences("hider", MODE_PRIVATE).getBoolean("match", false)
             setOnCheckedChangeListener { _, on ->
                 getSharedPreferences("hider", MODE_PRIVATE).edit().putBoolean("match", on).apply()
             }
         })
-        root.addView(CheckBox(this).apply {
-            text = "Landscape display (for games that force landscape)"
-            isChecked = getSharedPreferences("hider", MODE_PRIVATE).getBoolean("land", false)
-            setOnCheckedChangeListener { _, on ->
-                getSharedPreferences("hider", MODE_PRIVATE).edit().putBoolean("land", on).apply()
-            }
-        })
-        btnCreate = button(root, "Create hidden display") { bg { log(Vd.createDisplay(applicationContext)) } }
-        btnLaunch = button(root, "Launch app on hidden display…") { pickApp() }
-        btnViewer = button(root, "Open viewer (see and control)") {
-            startActivity(Intent(this, ViewerActivity::class.java))
-        }
+        btnLaunch = button(root, "Launch app on a hidden display…") { pickApp() }
 
-        header(root, "Apps on the hidden display")
+        header(root, "Hidden displays")
+        displaysBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(displaysBox)
+
+        header(root, "Apps on hidden displays")
         tasksBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(tasksBox)
         button(root, "Refresh list") { refreshTasks() }
-        btnDestroy = button(root, "Stop all apps and destroy display") { bg { Vd.stopAll(applicationContext) } }
+        btnStopAll = button(root, "Stop all apps and destroy all displays") { bg { Vd.stopAll(applicationContext) } }
 
         header(root, "Diagnostics")
-        button(root, "Heartbeat test on hidden display") { heartbeatOn(Vd.displayId) }
+        button(root, "Heartbeat test on first hidden display") { heartbeatOn(Vd.displays.firstOrNull()?.id ?: -1) }
         button(root, "Heartbeat control on main display") { heartbeatOn(0) }
         button(root, "Check heartbeat result") { log(analyze()) }
         button(root, "Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
@@ -165,20 +156,19 @@ class MainActivity : Activity() {
         val perm = Vd.permitted()
         if (perm && Vd.service == null) Vd.connect(applicationContext)
         val connected = Vd.service != null
-        val hasDisplay = Vd.displayId >= 0
+        val disp = Vd.displays
 
         statusView.text = "Shizuku: ${if (ping) "running" else "NOT running (start it via wireless debugging)"}\n" +
             "Permission: ${if (perm) "granted" else "not granted"}\n" +
             "Service: ${if (connected) "connected" else "not connected"}\n" +
-            "Hidden display: ${if (hasDisplay) "#${Vd.displayId} (${Vd.width}x${Vd.height})" else "none"}"
+            "Hidden displays: ${disp.size}"
 
         fun vis(b: Button, show: Boolean) { b.visibility = if (show) View.VISIBLE else View.GONE }
         vis(btnGrant, ping && !perm)
         vis(btnConnect, perm && !connected)
-        vis(btnCreate, connected && !hasDisplay)
         vis(btnLaunch, connected)
-        vis(btnViewer, connected && hasDisplay)
-        vis(btnDestroy, connected && hasDisplay)
+        vis(btnStopAll, connected && disp.isNotEmpty())
+        renderDisplays(disp)
         refreshTasks()
     }
 
@@ -187,18 +177,48 @@ class MainActivity : Activity() {
         Shizuku.requestPermission(100)
     }
 
-    // ---- hidden app list ----
+    // ---- displays ----
+
+    private fun renderDisplays(list: List<Vd.Disp>) {
+        displaysBox.removeAllViews()
+        if (list.isEmpty()) {
+            displaysBox.addView(TextView(this).apply { text = "(none yet, one is created when you launch an app)" })
+            return
+        }
+        for (d in list) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(this).apply { text = d.label }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(Button(this).apply {
+                text = "Viewer"; isAllCaps = false
+                setOnClickListener {
+                    startActivity(Intent(this@MainActivity, ViewerActivity::class.java).putExtra("display", d.id))
+                }
+            })
+            row.addView(Button(this).apply {
+                text = "Destroy"; isAllCaps = false
+                setOnClickListener { bg { Vd.destroyDisplay(applicationContext, d.id) } }
+            })
+            displaysBox.addView(row)
+        }
+    }
+
+    // ---- app list ----
+
+    private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String)
 
     private fun refreshTasks() {
-        val d = Vd.displayId
-        if (d < 0 || Vd.service == null) {
+        val disp = Vd.displays
+        if (disp.isEmpty() || Vd.service == null) {
             tasksBox.removeAllViews()
-            tasksBox.addView(TextView(this).apply { text = "(no hidden display)" })
+            tasksBox.addView(TextView(this).apply { text = "(no hidden displays)" })
             return
         }
         bg {
-            val list = Vd.tasks(d)
-            runOnUiThread { renderTasks(list) }
+            val rows = disp.flatMap { d -> Vd.tasks(d.id).map { Row(d, it.first, it.second) } }
+            runOnUiThread { renderTasks(rows) }
         }
     }
 
@@ -206,28 +226,30 @@ class MainActivity : Activity() {
         packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
     } catch (_: Throwable) { pkg }
 
-    private fun renderTasks(list: List<Pair<Int, String>>) {
+    private fun renderTasks(list: List<Row>) {
         tasksBox.removeAllViews()
         if (list.isEmpty()) {
             tasksBox.addView(TextView(this).apply { text = "(nothing running there yet)" })
             return
         }
-        for ((id, pkg) in list) {
+        for (r in list) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
-            row.addView(TextView(this).apply { text = appLabel(pkg) }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(TextView(this).apply {
+                text = "${appLabel(r.pkg)}\n#${r.display.id} ${if (r.display.landscape) "landscape" else "portrait"}"
+            }, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(Button(this).apply {
                 text = "Stop"; isAllCaps = false
                 setOnClickListener {
-                    bg { log(Vd.exec("am force-stop $pkg")); Thread.sleep(800); runOnUiThread { refreshTasks() } }
+                    bg { log(Vd.exec("am force-stop ${r.pkg}")); Thread.sleep(800); runOnUiThread { refreshTasks() } }
                 }
             })
             row.addView(Button(this).apply {
                 text = "To main"; isAllCaps = false
                 setOnClickListener {
-                    bg { log(Vd.toMain(applicationContext, id, pkg)); Thread.sleep(800); runOnUiThread { refreshTasks() } }
+                    bg { log(Vd.toMain(applicationContext, r.taskId, r.pkg)); Thread.sleep(800); runOnUiThread { refreshTasks() } }
                 }
             })
             tasksBox.addView(row)
@@ -264,19 +286,34 @@ class MainActivity : Activity() {
         })
         val dialog = AlertDialog.Builder(this).setTitle("Launch on hidden display").setView(box).show()
         list.setOnItemClickListener { _, _, pos, _ ->
-            val pkg = shown[pos].second
+            val (label, pkg) = shown[pos]
             dialog.dismiss()
-            bg {
-                if (Vd.ensureDisplay(applicationContext)) {
-                    log("Launch $pkg:\n" + Vd.launch(applicationContext, pkg))
-                    Thread.sleep(1500)
-                    runOnUiThread { refreshTasks() }
-                }
+            askOrientation(label, pkg)
+        }
+    }
+
+    private fun askOrientation(label: String, pkg: String) {
+        AlertDialog.Builder(this)
+            .setTitle(label)
+            .setMessage("Which hidden display should it run on?")
+            .setPositiveButton("Portrait") { _, _ -> launchApp(pkg, false) }
+            .setNegativeButton("Landscape") { _, _ -> launchApp(pkg, true) }
+            .setNeutralButton("Cancel", null)
+            .show()
+    }
+
+    private fun launchApp(pkg: String, landscape: Boolean) {
+        bg {
+            val id = Vd.ensureDisplay(applicationContext, landscape)
+            if (id >= 0) {
+                log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
+                Thread.sleep(1500)
+                runOnUiThread { refresh() }
             }
         }
     }
 
-    // ---- heartbeat diagnostics (from 0.1) ----
+    // ---- heartbeat diagnostics ----
 
     private fun heartbeatOn(display: Int) {
         if (display < 0) { log("No hidden display yet."); return }

@@ -16,27 +16,33 @@ import android.view.MotionEvent
 import android.view.Surface
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
 import java.lang.reflect.Proxy
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.system.exitProcess
 
 /**
- * Runs as the shell user (started by Shizuku). Creates a virtual display that
- * lives as long as this process, and runs shell commands.
+ * Runs as the shell user (started by Shizuku). Owns any number of virtual displays,
+ * which live as long as this process, and injects input into them.
  */
 class VdService : IVdService.Stub() {
 
-    private var reader: ImageReader? = null
-    private var thread: HandlerThread? = null
-    private var dm: Any? = null
-    private var cb: Any? = null
-    private var cbBinder: Binder? = null
-    private var displayId = -1
-    private var dispW = 0
-    private var dispH = 0
-    private var viewerSurface: Surface? = null
+    private class VD(
+        val id: Int,
+        val w: Int,
+        val h: Int,
+        val reader: ImageReader,
+        val thread: HandlerThread,
+        val dm: Any,
+        val cb: Any
+    ) {
+        var viewerSurface: Surface? = null
+    }
+
+    private val displays = ConcurrentHashMap<Int, VD>()
     private var inputIface: Any? = null
-    private var injectMethod: java.lang.reflect.Method? = null
-    private var touchDownTime = 0L
+    private var injectMethod: Method? = null
+    @Volatile private var touchDownTime = 0L
     @Volatile private var lastError = ""
 
     companion object {
@@ -59,96 +65,86 @@ class VdService : IVdService.Stub() {
     }
 
     override fun destroy() {
-        cleanup()
+        displays.values.forEach { cleanup(it) }
+        displays.clear()
+        run("settings delete global force_resizable_activities")
         exitProcess(0)
     }
 
-    override fun currentDisplay(): Int = displayId
-
     override fun createDisplay(w: Int, h: Int, dpi: Int): String {
-        cleanup()
         val errors = StringBuilder()
         for (flags in intArrayOf(FULL, MID, BASE)) {
             try {
-                val id = create(w, h, dpi, flags)
-                displayId = id
-                dispW = w
-                dispH = h
+                val vd = create(w, h, dpi, flags)
+                displays[vd.id] = vd
                 // Let non-resizable apps open on a secondary display.
                 run("settings put global force_resizable_activities 1")
-                return "OK:$id (flags=$flags)"
+                return "OK:${vd.id} (flags=$flags)"
             } catch (t: Throwable) {
-                val real = (t as? InvocationTargetException)?.targetException ?: t
                 errors.append("flags=").append(flags).append(": ")
-                    .append(Log.getStackTraceString(real).take(900)).append('\n')
-                cleanup()
+                    .append(Log.getStackTraceString(unwrap(t)).take(900)).append('\n')
             }
         }
         return "ERR:\n$errors"
     }
 
-    override fun releaseDisplay(): String {
-        cleanup()
-        displayId = -1
-        dispW = 0
-        dispH = 0
-        run("settings delete global force_resizable_activities")
+    override fun releaseDisplay(id: Int): String {
+        displays.remove(id)?.let { cleanup(it) }
+        if (displays.isEmpty()) run("settings delete global force_resizable_activities")
         return "OK"
     }
 
     override fun exec(cmd: String): String = run(cmd)
 
-    override fun info(): String = "$displayId,$dispW,$dispH,$lastError"
+    override fun info(): String =
+        displays.values.sortedBy { it.id }.joinToString(";") { "${it.id},${it.w},${it.h}" } + "#" + lastError
 
-    override fun setSurface(s: Surface): String = try {
-        swapSurface(s); "OK"
+    override fun setSurface(id: Int, s: Surface): String = try {
+        swapSurface(id, s); "OK"
     } catch (t: Throwable) {
         "ERR: " + Log.getStackTraceString(unwrap(t)).take(700)
     }
 
-    override fun clearSurface(): String = try {
-        swapSurface(null); "OK"
+    override fun clearSurface(id: Int): String = try {
+        swapSurface(id, null); "OK"
     } catch (t: Throwable) {
         "ERR: " + Log.getStackTraceString(unwrap(t)).take(700)
     }
 
     private fun unwrap(t: Throwable): Throwable = (t as? InvocationTargetException)?.targetException ?: t
 
-    private fun swapSurface(s: Surface?) {
-        val d = dm ?: error("no display")
-        val c = cb ?: error("no display")
-        val target = s ?: reader?.surface ?: error("no fallback surface")
+    private fun swapSurface(id: Int, s: Surface?) {
+        val vd = displays[id] ?: error("no such display")
+        val target = s ?: vd.reader.surface
         val m = Class.forName("android.hardware.display.IDisplayManager").methods
             .firstOrNull { it.name == "setVirtualDisplaySurface" }
             ?: error("setVirtualDisplaySurface not found")
-        m.invoke(d, c, target)
-        val old = viewerSurface
-        viewerSurface = s
+        m.invoke(vd.dm, vd.cb, target)
+        val old = vd.viewerSurface
+        vd.viewerSurface = s
         if (old != null && old !== s) try { old.release() } catch (_: Throwable) {}
     }
 
-    // ---- input injection (targets the hidden display) ----
+    // ---- input injection (targets one hidden display) ----
 
-    override fun touch(action: Int, x: Float, y: Float) {
-        if (displayId < 0) return
+    override fun touch(id: Int, action: Int, x: Float, y: Float) {
         val now = SystemClock.uptimeMillis()
         if (action == MotionEvent.ACTION_DOWN) touchDownTime = now
         val ev = MotionEvent.obtain(touchDownTime, now, action, x, y, 0)
         ev.source = InputDevice.SOURCE_TOUCHSCREEN
-        inject(ev)
+        inject(ev, id)
         ev.recycle()
     }
 
-    override fun key(keyCode: Int, meta: Int) {
-        if (displayId < 0) return
+    override fun key(id: Int, keyCode: Int, meta: Int) {
         val now = SystemClock.uptimeMillis()
         for (a in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
             val ev = KeyEvent(now, now, a, keyCode, 0, meta, -1, 0, 0, InputDevice.SOURCE_KEYBOARD)
-            inject(ev)
+            inject(ev, id)
         }
     }
 
-    private fun inject(ev: InputEvent) {
+    private fun inject(ev: InputEvent, displayId: Int) {
         try {
             if (injectMethod == null) {
                 val binder = Class.forName("android.os.ServiceManager")
@@ -167,15 +163,24 @@ class VdService : IVdService.Stub() {
         }
     }
 
-    override fun rotation(): Int = try {
+    override fun rotation(id: Int): Int = try {
         val c = Class.forName("android.hardware.display.DisplayManagerGlobal")
         val g = c.getMethod("getInstance").invoke(null)
-        val d = c.getMethod("getRealDisplay", Int::class.javaPrimitiveType).invoke(g, displayId) as android.view.Display
+        val d = c.getMethod("getRealDisplay", Int::class.javaPrimitiveType).invoke(g, id) as android.view.Display
         d.rotation
     } catch (t: Throwable) {
         if (lastError.isEmpty()) lastError = "rotation: " + unwrap(t).toString().take(150)
         0
     }
+
+    // ---- task listing ----
+
+    private fun isRunning(pkg: String): Boolean = try {
+        val p = ProcessBuilder("sh", "-c", "pidof $pkg").redirectErrorStream(true).start()
+        val o = p.inputStream.bufferedReader().readText().trim()
+        p.waitFor()
+        o.isNotEmpty() && o.all { it.isDigit() || it == ' ' }
+    } catch (_: Throwable) { true }
 
     override fun tasksOn(displayId: Int): String = try {
         val p = ProcessBuilder("sh", "-c", "dumpsys activity activities").redirectErrorStream(true).start()
@@ -191,7 +196,8 @@ class VdService : IVdService.Stub() {
             else if (line.isNotEmpty() && !line[0].isWhitespace()) cur = -1 // a new top-level section (recents etc.)
             if (cur == displayId) taskRe.find(line)?.let { res.putIfAbsent(it.groupValues[1].toInt(), it.groupValues[2]) }
         }
-        res.entries.joinToString("\n") { "${it.key}|${it.value}" }
+        // Android keeps a task listed for a while after its app is killed; hide those.
+        res.entries.filter { isRunning(it.value) }.joinToString("\n") { "${it.key}|${it.value}" }
     } catch (t: Throwable) {
         "ERR: $t"
     }
@@ -205,69 +211,72 @@ class VdService : IVdService.Stub() {
         "ERR: $t"
     }
 
-    private fun create(w: Int, h: Int, dpi: Int, flags: Int): Int {
-        val t = HandlerThread("vd-reader")
-        t.start()
-        thread = t
-        val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
-        reader = r
-        r.setOnImageAvailableListener({ rd ->
-            try { rd.acquireLatestImage()?.close() } catch (_: Throwable) {}
-        }, Handler(t.looper))
-        val surface: Surface = r.surface
+    // ---- display creation ----
 
-        val sm = Class.forName("android.os.ServiceManager")
-        val binder = sm.getMethod("getService", String::class.java).invoke(null, "display") as IBinder
-        val dmClass = Class.forName("android.hardware.display.IDisplayManager")
-        val dmI = Class.forName("android.hardware.display.IDisplayManager\$Stub")
-            .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
-        dm = dmI
-
-        val intT = Int::class.javaPrimitiveType
-        val bClass = Class.forName("android.hardware.display.VirtualDisplayConfig\$Builder")
-        val builder = bClass.getConstructor(String::class.java, intT, intT, intT)
-            .newInstance("HiderLab", w, h, dpi)
-        bClass.getMethod("setFlags", intT).invoke(builder, flags)
-        bClass.getMethod("setSurface", Surface::class.java).invoke(builder, surface)
-        val config = bClass.getMethod("build").invoke(builder)
-
-        val cbIface = Class.forName("android.hardware.display.IVirtualDisplayCallback")
-        val binderObj = object : Binder() {
-            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean = true
+    private fun create(w: Int, h: Int, dpi: Int, flags: Int): VD {
+        val thread = HandlerThread("vd-reader").also { it.start() }
+        val reader = try {
+            ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
+        } catch (e: Throwable) {
+            thread.quitSafely()
+            throw e
         }
-        cbBinder = binderObj
-        val handler = InvocationHandler { _, m, _ ->
-            when (m.name) {
-                "asBinder" -> binderObj
-                "hashCode" -> 1
-                "equals" -> false
-                "toString" -> "cb"
-                else -> null
+        try {
+            reader.setOnImageAvailableListener({ rd ->
+                try { rd.acquireLatestImage()?.close() } catch (_: Throwable) {}
+            }, Handler(thread.looper))
+            val surface: Surface = reader.surface
+
+            val binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String::class.java).invoke(null, "display") as IBinder
+            val dmClass = Class.forName("android.hardware.display.IDisplayManager")
+            val dmI = Class.forName("android.hardware.display.IDisplayManager\$Stub")
+                .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+
+            val intT = Int::class.javaPrimitiveType
+            val bClass = Class.forName("android.hardware.display.VirtualDisplayConfig\$Builder")
+            val builder = bClass.getConstructor(String::class.java, intT, intT, intT)
+                .newInstance("HiderLab", w, h, dpi)
+            bClass.getMethod("setFlags", intT).invoke(builder, flags)
+            bClass.getMethod("setSurface", Surface::class.java).invoke(builder, surface)
+            val config = bClass.getMethod("build").invoke(builder)
+
+            val cbIface = Class.forName("android.hardware.display.IVirtualDisplayCallback")
+            val binderObj = object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean = true
             }
-        }
-        val cbProxy = Proxy.newProxyInstance(cbIface.classLoader, arrayOf(cbIface), handler)
-        cb = cbProxy
+            val handler = InvocationHandler { _, m, _ ->
+                when (m.name) {
+                    "asBinder" -> binderObj
+                    "hashCode" -> 1
+                    "equals" -> false
+                    "toString" -> "cb"
+                    else -> null
+                }
+            }
+            val cbProxy = Proxy.newProxyInstance(cbIface.classLoader, arrayOf(cbIface), handler)
 
-        val m = dmClass.methods.firstOrNull { it.name == "createVirtualDisplay" }
-            ?: error("IDisplayManager.createVirtualDisplay not found")
-        if (m.parameterCount != 4) error("Unexpected signature: $m")
-        val id = m.invoke(dmI, config, cbProxy, null, "com.android.shell") as Int
-        if (id < 0) error("createVirtualDisplay returned $id")
-        return id
+            val m = dmClass.methods.firstOrNull { it.name == "createVirtualDisplay" }
+                ?: error("IDisplayManager.createVirtualDisplay not found")
+            if (m.parameterCount != 4) error("Unexpected signature: $m")
+            val id = m.invoke(dmI, config, cbProxy, null, "com.android.shell") as Int
+            if (id < 0) error("createVirtualDisplay returned $id")
+            return VD(id, w, h, reader, thread, dmI, cbProxy)
+        } catch (e: Throwable) {
+            try { reader.close() } catch (_: Throwable) {}
+            thread.quitSafely()
+            throw e
+        }
     }
 
-    private fun cleanup() {
+    private fun cleanup(vd: VD) {
         try {
-            val d = dm
-            val c = cb
-            if (d != null && c != null) {
-                Class.forName("android.hardware.display.IDisplayManager")
-                    .getMethod("releaseVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"))
-                    .invoke(d, c)
-            }
+            Class.forName("android.hardware.display.IDisplayManager")
+                .getMethod("releaseVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"))
+                .invoke(vd.dm, vd.cb)
         } catch (_: Throwable) {}
-        try { reader?.close() } catch (_: Throwable) {}
-        try { thread?.quitSafely() } catch (_: Throwable) {}
-        reader = null; thread = null; dm = null; cb = null; cbBinder = null
+        try { vd.viewerSurface?.release() } catch (_: Throwable) {}
+        try { vd.reader.close() } catch (_: Throwable) {}
+        try { vd.thread.quitSafely() } catch (_: Throwable) {}
     }
 }

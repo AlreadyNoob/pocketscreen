@@ -3,6 +3,8 @@ package com.hiderlab.vd
 import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -15,33 +17,35 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import android.os.Handler
-import android.os.Looper
 
 /**
- * Live view of the hidden display. While this screen is open the display draws into the
- * SurfaceView; when it closes the display goes back to its invisible surface.
- * Touches are injected into the hidden display, keys and text go to the focused app there.
+ * Live view of one hidden display (pass its id as the "display" extra). While this screen is
+ * open the display draws into the SurfaceView; when it closes the display goes back to its
+ * invisible surface. Touches are injected into the display, keys and text go to the focused app.
  */
 class ViewerActivity : Activity(), SurfaceHolder.Callback {
 
     private lateinit var sv: SurfaceView
+    private lateinit var box: FrameLayout
+    private lateinit var input: EditText
+    private lateinit var statusLine: TextView
+    private var displayId = -1
     private var dw = 720
     private var dh = 1280
-    private lateinit var input: EditText
-    private lateinit var box: FrameLayout
     private var rot = 0
-    private lateinit var statusLine: TextView
-    private val ui = Handler(Looper.getMainLooper())
     private var touches = 0
+    private val ui = Handler(Looper.getMainLooper())
+
     private val poll = object : Runnable {
         override fun run() {
             Thread {
                 Vd.refreshInfo()
-                val r = try { Vd.service?.rotation() ?: 0 } catch (_: Throwable) { 0 }
+                val gone = Vd.display(displayId) == null
+                val r = try { Vd.service?.rotation(displayId) ?: 0 } catch (_: Throwable) { 0 }
                 ui.post {
-                    if (r != rot) { rot = r; fit() }
-                    statusLine.text = "display #${Vd.displayId}  rot=$rot  touches sent: $touches  " +
+                    if (gone) { finish(); return@post }
+                    rot = r
+                    statusLine.text = "display #$displayId  rot=$rot  touches sent: $touches  " +
                         (if (Vd.inputError.isEmpty()) "input: ok" else "input ERROR: ${Vd.inputError}")
                 }
             }.start()
@@ -51,13 +55,15 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Vd.service == null || Vd.displayId < 0) {
-            Toast.makeText(this, "No hidden display. Create one first.", Toast.LENGTH_LONG).show()
+        displayId = intent.getIntExtra("display", -1)
+        val d = Vd.display(displayId)
+        if (Vd.service == null || d == null) {
+            Toast.makeText(this, "That hidden display is gone.", Toast.LENGTH_LONG).show()
             finish()
             return
         }
-        dw = Vd.width
-        dh = Vd.height
+        dw = d.w
+        dh = d.h
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -68,7 +74,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         sv = SurfaceView(this)
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
-
         box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
 
         sv.holder.setFixedSize(dw, dh)
@@ -93,17 +98,16 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
                 else -> { x = bx; y = by }
             }
             touches++
-            try { Vd.service?.touch(action, x, y) } catch (_: Throwable) {}
+            try { Vd.service?.touch(displayId, action, x, y) } catch (_: Throwable) {}
             true
         }
 
-        // Key row
         val keys = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun key(label: String, code: Int, meta: Int = 0) {
             keys.addView(Button(this).apply {
                 text = label
                 isAllCaps = false
-                setOnClickListener { try { Vd.service?.key(code, meta) } catch (_: Throwable) {} }
+                setOnClickListener { try { Vd.service?.key(displayId, code, meta) } catch (_: Throwable) {} }
             })
         }
         val ctrl = KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
@@ -124,7 +128,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         root.addView(statusLine)
         root.addView(HorizontalScrollView(this).apply { addView(keys) })
 
-        // Text row
         input = EditText(this).apply {
             hint = "Type here, then Send"
             setTextColor(Color.WHITE)
@@ -146,6 +149,16 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
         setContentView(root)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::statusLine.isInitialized) ui.post(poll)
+    }
+
+    override fun onPause() {
+        ui.removeCallbacks(poll)
+        super.onPause()
+    }
+
     private fun fit() {
         val cw = box.width
         val ch = box.height
@@ -164,29 +177,19 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
     private fun sendText(enter: Boolean) {
         val t = input.text.toString()
         input.setText("")
-        val d = Vd.displayId
+        val d = displayId
         Thread {
             if (t.isNotEmpty()) {
                 val esc = t.replace("'", "'\\''").replace(" ", "%s")
                 Vd.exec("input -d $d text '$esc'")
             }
-            if (enter) try { Vd.service?.key(KeyEvent.KEYCODE_ENTER, 0) } catch (_: Throwable) {}
+            if (enter) try { Vd.service?.key(d, KeyEvent.KEYCODE_ENTER, 0) } catch (_: Throwable) {}
         }.start()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (::statusLine.isInitialized) ui.post(poll)
-    }
-
-    override fun onPause() {
-        ui.removeCallbacks(poll)
-        super.onPause()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         try {
-            val r = Vd.service?.setSurface(holder.surface)
+            val r = Vd.service?.setSurface(displayId, holder.surface)
             if (r != null && r != "OK") {
                 Vd.log("setSurface: $r")
                 Toast.makeText(this, "Viewer failed, see log on main screen", Toast.LENGTH_LONG).show()
@@ -197,6 +200,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback {
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        try { Vd.service?.clearSurface() } catch (_: Throwable) {}
+        try { Vd.service?.clearSurface(displayId) } catch (_: Throwable) {}
     }
 }
