@@ -830,8 +830,25 @@ class MainActivity : Activity() {
         Ui.add(parent, row, top = 10)
     }
 
-    private fun settingsCycle(parent: LinearLayout, title: String, options: List<Pair<String, Int>>, current: Int, onChange: (Int) -> Unit) {
-        var idx = options.indexOfFirst { it.second == current }.coerceAtLeast(0)
+    private fun limitLabel(isBattery: Boolean, v: Int, defaultValue: Int?): String = when {
+        v < 0 -> "Default (${limitLabel(isBattery, defaultValue ?: 0, null)})"
+        v == 0 -> "Off"
+        isBattery -> "$v%"
+        v < 60 -> "$v min"
+        v == 60 -> "1 hour"
+        v % 60 == 0 -> "${v / 60} hours"
+        else -> "${v / 60}h ${v % 60}m"
+    }
+
+    /**
+     * A row that shows a battery % or minutes limit. Tapping opens a list of choices plus a box for a
+     * custom number. [defaultValue] non-null means this is a per-app row that can fall back to a default.
+     */
+    private fun settingsLimit(
+        parent: LinearLayout, title: String, isBattery: Boolean,
+        current: Int, defaultValue: Int?, onChange: (Int) -> Unit
+    ) {
+        var value = current
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
@@ -843,14 +860,60 @@ class MainActivity : Activity() {
         val pill = Ui.text(this, "", 12f, Ui.TEXT, bold = true)
         pill.setPadding(dp(14), dp(6), dp(14), dp(6))
         fun style() {
-            val on = options[idx].second > 0
-            pill.text = options[idx].first
+            val on = value > 0 || (value < 0 && (defaultValue ?: 0) > 0)
+            pill.text = limitLabel(isBattery, value, defaultValue)
             pill.setTextColor(if (on) Ui.ON_ACCENT else Ui.MUTED)
             pill.background = Ui.shape(if (on) Ui.ACCENT else Ui.SURFACE2, Ui.dpf(this, 14f))
         }
         style()
         row.addView(pill)
-        row.setOnClickListener { idx = (idx + 1) % options.size; style(); onChange(options[idx].second) }
+        row.setOnClickListener {
+            Ui.sheet(this, 0.8f) { body, dlg ->
+                body.addView(Ui.text(this, title, 18f, Ui.TEXT, bold = true))
+                val scroll = ScrollView(this)
+                scroll.isVerticalScrollBarEnabled = false
+                val col = LinearLayout(this)
+                col.orientation = LinearLayout.VERTICAL
+                scroll.addView(col)
+                Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
+
+                fun pick(v: Int) { value = v; style(); onChange(v); dlg.dismiss() }
+                fun option(label: String, v: Int) {
+                    val sel = value == v
+                    Ui.add(col, Ui.button(this, label, if (sel) Ui.Kind.FILLED else Ui.Kind.TONAL) { pick(v) }, top = 8)
+                }
+                val choices = if (isBattery) listOf(10, 15, 20, 30, 50) else listOf(15, 30, 60, 120, 240)
+                if (defaultValue != null) option(limitLabel(isBattery, -1, defaultValue), -1)
+                // With a default of Off, a separate Off would just repeat it.
+                if (defaultValue == null || defaultValue != 0 || value == 0) option("Off", 0)
+                for (c in choices) option(limitLabel(isBattery, c, null), c)
+
+                Ui.add(col, Ui.text(this, if (isBattery) "Custom battery level (%, 1–99)" else "Custom time (minutes, 1–1440)", 12f, Ui.MUTED), top = 18)
+                val max = if (isBattery) 99 else 1440
+                val e = EditText(this)
+                e.filters = arrayOf(InputFilter { src, st, en, dest, ds, de ->
+                    val next = dest.toString().substring(0, ds) + src.subSequence(st, en) + dest.toString().substring(de)
+                    if (next.isEmpty()) null
+                    else if (next.length > max.toString().length || (next.toIntOrNull() ?: Int.MAX_VALUE) > max) "" else null
+                })
+                e.hint = if (isBattery) "e.g. 25" else "e.g. 90"
+                e.setHintTextColor(Ui.MUTED)
+                e.setTextColor(Ui.TEXT)
+                e.textSize = 15f
+                e.inputType = InputType.TYPE_CLASS_NUMBER
+                e.isSingleLine = true
+                e.setPadding(dp(16), dp(12), dp(16), dp(12))
+                e.background = Ui.shape(Ui.SURFACE2, Ui.dpf(this, 14f))
+                if (value > 0 && value !in choices) e.setText(value.toString())
+                Ui.add(col, e, top = 4)
+                Ui.add(col, Ui.button(this, "Set custom value", Ui.Kind.FILLED) {
+                    val v = e.text.toString().toIntOrNull()
+                    if (v == null || v < 1 || v > max) {
+                        Toast.makeText(this, if (isBattery) "Enter 1–99" else "Enter 1–1440", Toast.LENGTH_SHORT).show()
+                    } else pick(v)
+                }, top = 8)
+            }
+        }
         Ui.add(parent, row, top = 10)
     }
 
@@ -860,14 +923,8 @@ class MainActivity : Activity() {
             Ui.add(body, Ui.text(this, "Auto-stop for this app only. \"Default\" uses the value from Settings.", 13f, Ui.MUTED), top = 2)
             val gb = AppSettings.autoStopBattery(this)
             val gm = AppSettings.autoStopMinutes(this)
-            fun pctLabel(v: Int) = if (v == 0) "Off" else "$v%"
-            fun minLabel(v: Int) = when { v == 0 -> "Off"; v < 60 -> "$v min"; v == 60 -> "1 hour"; else -> "${v / 60} hours" }
-            settingsCycle(body, "Stop at low battery",
-                listOf("Default (${pctLabel(gb)})" to -1, "Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "30%" to 30),
-                AppSettings.appBattery(this, pkg)) { AppSettings.setAppBattery(this, pkg, it) }
-            settingsCycle(body, "Stop after running",
-                listOf("Default (${minLabel(gm)})" to -1, "Off" to 0, "30 min" to 30, "1 hour" to 60, "2 hours" to 120, "4 hours" to 240),
-                AppSettings.appMinutes(this, pkg)) { AppSettings.setAppMinutes(this, pkg, it) }
+            settingsLimit(body, "Stop at low battery", true, AppSettings.appBattery(this, pkg), gb) { AppSettings.setAppBattery(this, pkg, it) }
+            settingsLimit(body, "Stop after running", false, AppSettings.appMinutes(this, pkg), gm) { AppSettings.setAppMinutes(this, pkg, it) }
             Ui.add(body, Ui.button(this, "Done", Ui.Kind.FILLED) { dlg.dismiss() }, top = 18)
         }
     }
@@ -891,12 +948,8 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "Sound restored", Toast.LENGTH_SHORT).show()
             }
             Ui.add(col, Ui.text(this, "Auto-stop defaults (tap to change)", 12f, Ui.MUTED), top = 16)
-            settingsCycle(col, "Stop at low battery",
-                listOf("Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "30%" to 30),
-                AppSettings.autoStopBattery(this)) { AppSettings.setAutoStopBattery(this, it) }
-            settingsCycle(col, "Stop app after running",
-                listOf("Off" to 0, "30 min" to 30, "1 hour" to 60, "2 hours" to 120, "4 hours" to 240),
-                AppSettings.autoStopMinutes(this)) { AppSettings.setAutoStopMinutes(this, it) }
+            settingsLimit(col, "Stop at low battery", true, AppSettings.autoStopBattery(this), null) { AppSettings.setAutoStopBattery(this, it) }
+            settingsLimit(col, "Stop app after running", false, AppSettings.autoStopMinutes(this), null) { AppSettings.setAutoStopMinutes(this, it) }
             Ui.add(col, Ui.text(this, "Used by apps with no setting of their own. Set one per app from its ⋮ menu. Stopping also removes the display. Battery stop only applies when not charging.", 11f, Ui.MUTED), top = 6)
             Ui.add(col, Ui.text(this, "Options", 12f, Ui.MUTED), top = 16)
             settingsToggle(col, "Show memory and CPU", "On each running app. Turn off for faster refreshing.", AppSettings.showStats(this)) {
