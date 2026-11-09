@@ -93,45 +93,47 @@ object Vd {
 
     // ---- freeze / resume ----
 
-    /** Main process of the app, or empty if it isn't running. */
-    private fun pidsOf(pkg: String, all: Boolean): List<Int> {
-        if (!all) return exec("pidof $pkg").trim().split(" ").mapNotNull { it.toIntOrNull() }.take(1)
-        return exec("ps -A -o PID,NAME").lines().mapNotNull { l ->
-            val p = l.trim().split(Regex("\\s+"), limit = 2)
-            if (p.size == 2 && (p[1] == pkg || p[1].startsWith("$pkg:"))) p[0].toIntOrNull() else null
-        }
+    /** Apps we froze. The system gives no easy "is it frozen" query, so we keep track ourselves. */
+    private val frozen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun running(pkg: String): Boolean = exec("pidof $pkg").trim().firstOrNull()?.isDigit() == true
+
+    /** Process names of the app: the main one plus any ":service" style extras. */
+    private fun processNames(pkg: String): List<String> {
+        val extra = exec("ps -A -o ARGS").lines().map { it.trim().substringBefore(' ') }
+            .filter { it.startsWith("$pkg:") }
+        return listOf(pkg) + extra.distinct()
     }
 
-    private fun stateOf(pid: Int): Char? =
-        exec("grep -m1 State: /proc/$pid/status").trim().removePrefix("State:").trim().firstOrNull()
+    /** True if we froze the app and it is still running (a restarted app is no longer frozen). */
+    fun isFrozen(pkg: String): Boolean {
+        if (pkg !in frozen) return false
+        if (running(pkg)) return true
+        frozen.remove(pkg)
+        return false
+    }
 
-    /** True when the app's main process is stopped (state T). */
-    fun isFrozen(pkg: String): Boolean = pidsOf(pkg, false).firstOrNull()?.let { stateOf(it) == 'T' } ?: false
+    private val errRe = Regex("(?i)error|exception|unknown|usage|denied|not permitted|no such|invalid")
 
     /**
-     * Pauses (SIGSTOP) or continues (SIGCONT) every process of the app. The app stays in memory
-     * with its state intact; it just gets no CPU time, so it makes no sound and uses no battery.
-     * Returns a log line saying what happened.
+     * Freezes or unfreezes the app with the system's own freezer (`cmd activity freeze`), which
+     * keeps it in memory with its state intact but gives it no CPU time. "--sticky" keeps the
+     * system from undoing it on its own. Returns a log line saying what happened.
      */
-    fun setFrozen(pkg: String, frozen: Boolean): String {
-        val pids = pidsOf(pkg, true)
-        if (pids.isEmpty()) return "$pkg isn't running."
-        val sig = if (frozen) "STOP" else "CONT"
-        var out = exec("kill -$sig ${pids.joinToString(" ")}").trim()
-        var ok = isFrozen(pkg) == frozen
-        if (!ok) {
-            // Works only if Shizuku runs as root.
-            val r = exec("su -c 'kill -$sig ${pids.joinToString(" ")}'").trim()
-            ok = isFrozen(pkg) == frozen
-            if (!ok) out = (out + "\n" + r).trim()
-        }
-        return (if (ok) (if (frozen) "Frozen" else "Resumed") + " $pkg (${pids.size} process(es))."
-        else "Could not ${if (frozen) "freeze" else "resume"} $pkg.") + if (out.isNotEmpty()) "\n$out" else ""
+    fun setFrozen(pkg: String, freeze: Boolean): String {
+        if (!running(pkg)) { frozen.remove(pkg); return "$pkg isn't running." }
+        val cmd = if (freeze) "freeze" else "unfreeze"
+        val outs = processNames(pkg).map { "$it: " + exec("cmd activity $cmd --sticky $it").trim() }
+        val bad = outs.firstOrNull { errRe.containsMatchIn(it) }
+        if (bad == null) { if (freeze) frozen.add(pkg) else frozen.remove(pkg) }
+        else if (!freeze) frozen.remove(pkg)
+        return if (bad == null) (if (freeze) "Frozen" else "Resumed") + " $pkg."
+        else "Could not ${if (freeze) "freeze" else "resume"} $pkg:\n" + outs.joinToString("\n")
     }
 
-    /** Resumes every frozen app on the hidden displays. */
+    /** Resumes every frozen app. */
     fun resumeAll(): String {
-        val pkgs = displays.flatMap { d -> tasks(d.id).map { it.second } }.distinct().filter { isFrozen(it) }
+        val pkgs = frozen.toList()
         return if (pkgs.isEmpty()) "No frozen apps." else pkgs.joinToString("\n") { setFrozen(it, false) }
     }
 
@@ -181,8 +183,12 @@ object Vd {
         mutedApps(ctx).joinToString("\n") { "$it: " + applyAudio(it, false).lines().lastOrNull().orEmpty() }
             .ifEmpty { "No muted apps." }
 
+    /** Re-applies the saved sound state; used shortly after launch, once the app's process exists. */
+    fun syncAudio(ctx: Context, pkg: String): String = applyAudio(pkg, isMuted(ctx, pkg))
+
     /** Force-stops an app and returns its sound to normal. */
     fun stopApp(ctx: Context, pkg: String): String {
+        frozen.remove(pkg)
         val r = exec("am force-stop $pkg")
         restoreAudio(ctx, pkg)
         return r
@@ -264,11 +270,8 @@ object Vd {
     fun launch(ctx: Context, pkg: String, display: Int): String {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
             ?: return "No launcher activity for $pkg"
-        if (isMuted(ctx, pkg)) applyAudio(pkg, true)
-        else if (Regex("(?i)deny|ignore").containsMatchIn(exec("cmd appops get $pkg PLAY_AUDIO"))) {
-            // A leftover mute from an earlier session: the app is not set to muted, so give its sound back.
-            log("Restoring sound for $pkg: " + applyAudio(pkg, false))
-        }
+        // Always set the sound state explicitly; an app left in the default state can start silent.
+        applyAudio(pkg, isMuted(ctx, pkg))
         // If it is already open on the main screen, try to move that task instead of starting a copy.
         val onMain = tasks(0).firstOrNull { it.second == pkg }
         if (onMain != null) {

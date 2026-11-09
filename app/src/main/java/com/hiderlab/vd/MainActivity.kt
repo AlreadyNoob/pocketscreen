@@ -521,6 +521,8 @@ class MainActivity : Activity() {
                 Thread.sleep(600)
                 runOnUiThread { refresh() }
                 Thread.sleep(900)
+                // Once the process exists, set its sound state again.
+                Vd.syncAudio(applicationContext, pkg)
                 runOnUiThread { refresh() }
             }
         }
