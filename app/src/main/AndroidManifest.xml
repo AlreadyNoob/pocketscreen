@@ -45,6 +45,12 @@
             android:windowSoftInputMode="adjustNothing|stateHidden" />
 
         <activity
+            android:name=".FrozenActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true" />
+
+        <activity
             android:name=".HeartbeatActivity"
             android:exported="true" />
 

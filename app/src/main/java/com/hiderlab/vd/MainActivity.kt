@@ -337,11 +337,13 @@ class MainActivity : Activity() {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("Open viewer") { openViewer(r.display.id) },
                     Ui.MenuItem(if (r.frozen) "Resume app" else "Freeze app") {
+                        Toast.makeText(this, if (r.frozen) "Resuming…" else "Freezing… this can take up to 20 seconds", Toast.LENGTH_LONG).show()
                         bg {
-                            val res = Vd.setFrozen(r.pkg, !r.frozen)
+                            val res = if (r.frozen) Vd.resume(applicationContext, r.pkg, r.display.id)
+                                else Vd.freeze(applicationContext, r.pkg, r.display.id)
                             log(res)
                             runOnUiThread {
-                                Toast.makeText(this, res.lines().take(2).joinToString("\n"), Toast.LENGTH_LONG).show()
+                                Toast.makeText(this, res.lines().first(), Toast.LENGTH_LONG).show()
                                 refreshTasks()
                             }
                         }
@@ -689,7 +691,7 @@ class MainActivity : Activity() {
             diag("Show freeze-related shell commands") {
                 bg { log(Vd.exec("id; cmd activity help 2>&1 | grep -i -E 'freez|suspend|stop|kill'")) }
             }
-            diag("Resume all frozen apps") { bg { log(Vd.resumeAll()); runOnUiThread { refreshTasks() } } }
+            diag("Resume all frozen apps") { bg { log(Vd.resumeAll(applicationContext)); runOnUiThread { refreshTasks() } } }
             diag("Give sound back to all muted apps") { bg { log(Vd.restoreAllAudio(applicationContext)) } }
             diag("Show where apps are") {
                 bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
