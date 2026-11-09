@@ -35,6 +35,7 @@ import android.window.OnBackInvokedDispatcher
 class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private lateinit var sv: InputSurfaceView
+    private var suppressKb = false
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
     private lateinit var subView: TextView
@@ -113,8 +114,11 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         root.setBackgroundColor(Color.BLACK)
         // The keyboard overlays the display instead of resizing it; the display is panned instead.
         Ui.applyInsets(root, ime = false) { visible, height ->
+            val wasVisible = kbVisible
             kbVisible = visible
             imeHeight = height
+            // Only on the shown -> hidden change, so a keyboard that is still opening isn't cancelled.
+            if (wasVisible && !visible && ::sv.isInitialized && suppressKb) setEditor(false)
             if (::kbIcon.isInitialized) kbIcon.tint = if (visible) Ui.ACCENT else Ui.TEXT
             if (::sv.isInitialized) updatePan()
         }
@@ -152,6 +156,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         box = FrameLayout(this)
         sv = InputSurfaceView(this)
         sv.sink = this
+        suppressKb = AppSettings.suppressKeyboard(this)
+        if (suppressKb) sv.editorAllowed = false
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
         box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(); updatePan() }
@@ -207,13 +213,22 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         try { Vd.service?.keyEvent(displayId, action, code, meta) } catch (_: Throwable) {}
     }
 
+    /** With "suppress keyboard" on, the surface only counts as a text field while the user has the keyboard open. */
+    private fun setEditor(on: Boolean) {
+        if (!suppressKb || sv.editorAllowed == on) return
+        sv.editorAllowed = on
+        getSystemService(InputMethodManager::class.java).restartInput(sv)
+    }
+
     private fun toggleKeyboard() {
         kbToggledByUser = true
         val imm = getSystemService(InputMethodManager::class.java)
         if (kbVisible) {
             imm.hideSoftInputFromWindow(sv.windowToken, 0)
+            setEditor(false)
             if (Build.VERSION.SDK_INT < 30) setKb(false)
         } else {
+            setEditor(true)
             sv.requestFocus()
             imm.showSoftInput(sv, 0)
             if (Build.VERSION.SDK_INT < 30) setKb(true)

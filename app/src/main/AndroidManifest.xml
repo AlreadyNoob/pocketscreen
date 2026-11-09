@@ -44,10 +44,6 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustNothing|stateHidden" />
 
-        <activity
-            android:name=".HeartbeatActivity"
-            android:exported="true" />
-
         <service
             android:name=".HostService"
             android:exported="false"

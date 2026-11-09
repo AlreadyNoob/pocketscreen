@@ -24,12 +24,15 @@ class InputSurfaceView(ctx: Context) : SurfaceView(ctx) {
 
     var sink: InputSink? = null
 
+    /** When false the view tells Android it is not a text field, so no keyboard is requested for it. */
+    var editorAllowed = true
+
     init {
         isFocusable = true
         isFocusableInTouchMode = true
     }
 
-    override fun onCheckIsTextEditor(): Boolean = true
+    override fun onCheckIsTextEditor(): Boolean = editorAllowed
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
         // Plain, suggestion-free text so the keyboard sends characters immediately.

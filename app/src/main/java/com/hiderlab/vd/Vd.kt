@@ -26,7 +26,7 @@ object Vd {
     val listeners = CopyOnWriteArrayList<Runnable>()
     @Volatile var logSink: ((String) -> Unit)? = null
 
-    fun log(s: String) { logSink?.invoke(s) }
+    fun log(s: String) { Debug.write(s); logSink?.invoke(s) }
     fun changed() { listeners.forEach { try { it.run() } catch (_: Throwable) {} } }
 
     private val conn = object : ServiceConnection {

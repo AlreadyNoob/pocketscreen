@@ -12,7 +12,9 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
+import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
@@ -27,7 +29,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import rikka.shizuku.Shizuku
-import java.io.File
 
 class MainActivity : Activity() {
 
@@ -40,11 +41,6 @@ class MainActivity : Activity() {
     private lateinit var moreBtn: IconView
     private lateinit var displaysBox: LinearLayout
     private lateinit var tasksBox: LinearLayout
-
-    private val logBuf = StringBuilder()
-    private var logTv: TextView? = null
-    private var logScroll: ScrollView? = null
-    private var logHeader: View? = null
 
     private val versionName: String by lazy {
         try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (_: Throwable) { "" }
@@ -135,7 +131,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(pkgReceiver, pf, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(pkgReceiver, pf)
 
-        Vd.logSink = { log(it) }
+        Debug.init(applicationContext)
         Vd.listeners.add(refreshRunnable)
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(deadListener)
@@ -165,28 +161,13 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         try { unregisterReceiver(pkgReceiver) } catch (_: Throwable) {}
         Vd.listeners.remove(refreshRunnable)
-        Vd.logSink = null
         Shizuku.removeBinderReceivedListener(binderListener)
         Shizuku.removeBinderDeadListener(deadListener)
         Shizuku.removeRequestPermissionResultListener(permListener)
         super.onDestroy()
     }
 
-    private fun log(s: String) = runOnUiThread {
-        val t = "$s\n\n$logBuf".take(8000)
-        logBuf.setLength(0)
-        logBuf.append(t)
-        val tv = logTv
-        if (tv != null) {
-            tv.text = t
-            // Bring the fresh output into view if the sheet is open.
-            val sc = logScroll
-            val h = logHeader
-            if (sc != null && h != null) sc.post { sc.smoothScrollTo(0, h.top) }
-        } else if (::moreBtn.isInitialized) {
-            moreBtn.badge = true
-        }
-    }
+    private fun log(s: String) { Debug.write(s) }
 
     private fun bg(block: () -> Unit) {
         Thread {
@@ -438,51 +419,51 @@ class MainActivity : Activity() {
     }
 
     private fun askOrientation(a: Apps.App) {
-        val suggest = a.landscape
+        var sel = a.landscape
         Ui.sheet(this) { body, dlg ->
             body.addView(Ui.text(this, a.label, 18f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, "Which hidden display should it run on?", 13f, Ui.MUTED), top = 2)
+            Ui.add(body, Ui.text(this, "Choose the hidden display orientation", 13f, Ui.MUTED), top = 2)
 
             val tiles = LinearLayout(this)
             tiles.orientation = LinearLayout.HORIZONTAL
-            fun tile(label: String, landscape: Boolean, first: Boolean) {
-                val t = LinearLayout(this)
-                t.orientation = LinearLayout.VERTICAL
-                t.gravity = Gravity.CENTER_HORIZONTAL
-                t.setPadding(dp(8), dp(16), dp(8), dp(16))
-                val picked = suggest == landscape
-                t.background = Ui.withRipple(
-                    Ui.shape(Ui.SURFACE2, Ui.dpf(this, 18f), if (picked) Ui.ACCENT else Ui.OUTLINE, dp(if (picked) 2 else 1)),
-                    Ui.dpf(this, 18f)
-                )
-                t.isClickable = true
-                t.addView(PhoneIcon(this, landscape, if (picked) Ui.ACCENT else Ui.TEXT))
-                t.addView(Ui.text(this, label, 15f, Ui.TEXT, bold = true))
-                t.addView(Ui.text(this, if (picked) "Suggested" else " ", 11f, Ui.ACCENT))
-                t.setOnClickListener { dlg.dismiss(); launchApp(a.pkg, landscape) }
-                val lp = LinearLayout.LayoutParams(0, -2, 1f)
-                if (!first) lp.leftMargin = dp(12)
-                tiles.addView(t, lp)
-            }
-            tile("Portrait", false, true)
-            tile("Landscape", true, false)
             Ui.add(body, tiles, top = 16)
-            val p = Vd.sizeFor(this, false)
-            val l = Vd.sizeFor(this, true)
-            Ui.add(body, Ui.button(this, "Size ${p.first}×${p.second} / ${l.first}×${l.second}  ·  Change", Ui.Kind.TEXT) {
-                dlg.dismiss(); showDisplaySettings()
-            }, top = 8)
-            val soundBtn = Ui.button(this, "", Ui.Kind.TEXT) {}
-            fun styleSound() {
-                soundBtn.text = if (Vd.isMuted(this, a.pkg)) "Sound: muted  ·  Unmute" else "Sound: on  ·  Mute"
+
+            fun drawTiles() {
+                tiles.removeAllViews()
+                fun tile(label: String, landscape: Boolean) {
+                    val picked = sel == landscape
+                    val t = LinearLayout(this)
+                    t.orientation = LinearLayout.VERTICAL
+                    t.gravity = Gravity.CENTER_HORIZONTAL
+                    t.setPadding(dp(8), dp(16), dp(8), dp(16))
+                    t.background = Ui.withRipple(
+                        Ui.shape(
+                            if (picked) Ui.SURFACE2 else Ui.SURFACE,
+                            Ui.dpf(this, 18f),
+                            if (picked) Ui.ACCENT else Ui.OUTLINE,
+                            dp(if (picked) 2 else 1)
+                        ),
+                        Ui.dpf(this, 18f)
+                    )
+                    t.isClickable = true
+                    t.isFocusable = true
+                    t.addView(PhoneIcon(this, landscape, if (picked) Ui.ACCENT else Ui.MUTED))
+                    t.addView(Ui.text(this, label, 15f, if (picked) Ui.TEXT else Ui.MUTED, bold = true))
+                    t.addView(Ui.text(this, if (a.landscape == landscape) "Suggested" else " ", 11f, Ui.ACCENT))
+                    t.setOnClickListener { sel = landscape; drawTiles() }
+                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
+                    if (landscape) lp.leftMargin = dp(12)
+                    tiles.addView(t, lp)
+                }
+                tile("Portrait", false)
+                tile("Landscape", true)
             }
-            soundBtn.setOnClickListener {
-                Vd.setMutedPref(this, a.pkg, !Vd.isMuted(this, a.pkg))
-                styleSound()
-            }
-            styleSound()
-            Ui.add(body, soundBtn, top = 0)
-            Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 0)
+            drawTiles()
+
+            Ui.add(body, Ui.button(this, "Confirm and launch", Ui.Kind.FILLED) {
+                dlg.dismiss(); launchApp(a.pkg, sel)
+            }, top = 18)
+            Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 4)
         }
     }
 
@@ -528,8 +509,14 @@ class MainActivity : Activity() {
 
             var match = cfg.matchRatio
 
-            fun field(hint: String, value: Int): EditText {
+            fun field(hint: String, value: Int, max: Int): EditText {
                 val e = EditText(this)
+                // Block typing anything the display can't use: too many digits or above the maximum.
+                e.filters = arrayOf(InputFilter { src, st, en, dest, ds, de ->
+                    val next = dest.toString().substring(0, ds) + src.subSequence(st, en) + dest.toString().substring(de)
+                    if (next.isEmpty()) null
+                    else if (next.length > max.toString().length || (next.toIntOrNull() ?: Int.MAX_VALUE) > max) "" else null
+                })
                 e.hint = hint
                 e.setHintTextColor(Ui.MUTED)
                 e.setTextColor(Ui.TEXT)
@@ -551,31 +538,41 @@ class MainActivity : Activity() {
             modeRow.orientation = LinearLayout.HORIZONTAL
             Ui.add(body, modeRow, top = 14)
 
-            val wField = field("Width", cfg.width)
-            val hField = field("Height", cfg.customH)
-            val dpiField = field("DPI", cfg.dpi)
+            val wField = field("Width", cfg.width, 2160)
+            val hField = field("Height", cfg.customH, 3840)
+            val dpiField = field("DPI", cfg.dpi, 640)
             val preview = Ui.text(this, "", 13f, Ui.ACCENT)
 
             val fields = LinearLayout(this)
             fields.orientation = LinearLayout.VERTICAL
             Ui.add(body, fields, top = 4)
-            labeled(fields, "Width (px, portrait)", wField, 12)
+            labeled(fields, "Width (px, 240–2160)", wField, 12)
+            val wPresets = LinearLayout(this)
+            wPresets.orientation = LinearLayout.VERTICAL
+            Ui.add(fields, wPresets)
             val hBox = LinearLayout(this)
             hBox.orientation = LinearLayout.VERTICAL
-            labeled(hBox, "Height (px, portrait)", hField, 12)
+            labeled(hBox, "Height (px, 240–3840)", hField, 12)
             Ui.add(fields, hBox)
-            labeled(fields, "Density (DPI). Lower = smaller apps, more fits on screen", dpiField, 12)
 
-            // width presets
-            val presets = LinearLayout(this)
-            presets.orientation = LinearLayout.HORIZONTAL
-            for (pw in intArrayOf(540, 720, 1080)) {
-                val b = Ui.button(this, "${pw}", Ui.Kind.TONAL) { wField.setText(pw.toString()) }
-                val lp = LinearLayout.LayoutParams(0, -2, 1f)
-                lp.rightMargin = dp(8)
-                presets.addView(b, lp)
+            // presets: highlighted when the field matches
+            val chipRefs = ArrayList<Triple<TextView, EditText, Int>>()
+            fun presetRow(values: IntArray, target: EditText, into: LinearLayout) {
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.HORIZONTAL
+                for ((i, pv) in values.withIndex()) {
+                    val b = Ui.button(this, "$pv", Ui.Kind.TONAL) { target.setText(pv.toString()) }
+                    chipRefs.add(Triple(b, target, pv))
+                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
+                    if (i > 0) lp.leftMargin = dp(8)
+                    row.addView(b, lp)
+                }
+                Ui.add(into, row, top = 8)
             }
-            Ui.add(fields, presets, top = 8)
+            presetRow(intArrayOf(540, 720, 1080), wField, wPresets)
+            Ui.add(fields, Ui.text(this, "Density (DPI, 120–640). Lower = smaller apps", 12f, Ui.MUTED), top = 12)
+            Ui.add(fields, dpiField, top = 4)
+            presetRow(intArrayOf(240, 320, 420), dpiField, fields)
             Ui.add(body, preview, top = 12)
 
             fun current(): Vd.SizeCfg = Vd.SizeCfg(
@@ -584,7 +581,24 @@ class MainActivity : Activity() {
                 hField.text.toString().toIntOrNull() ?: 1600,
                 dpiField.text.toString().toIntOrNull() ?: Vd.DEF_DPI
             )
+            fun valid(): String? {
+                val w = wField.text.toString().toIntOrNull()
+                val h = hField.text.toString().toIntOrNull()
+                val d = dpiField.text.toString().toIntOrNull()
+                if (w == null || w < 240 || w > 2160) return "Width must be 240–2160"
+                if (!match && (h == null || h < 240 || h > 3840)) return "Height must be 240–3840"
+                if (d == null || d < 120 || d > 640) return "DPI must be 120–640"
+                return null
+            }
             fun updatePreview() {
+                for ((b, f, v) in chipRefs) {
+                    val on = f.text.toString() == v.toString()
+                    b.setTextColor(if (on) Ui.ON_ACCENT else Ui.TEXT)
+                    b.background = Ui.withRipple(Ui.shape(if (on) Ui.ACCENT else Ui.SURFACE2, Ui.dpf(this, 22f)), Ui.dpf(this, 22f))
+                }
+                val err = valid()
+                if (err != null) { preview.setTextColor(Ui.BAD); preview.text = err; return }
+                preview.setTextColor(Ui.ACCENT)
                 val c = current()
                 val p = Vd.sizeFor(this, false, c)
                 val l = Vd.sizeFor(this, true, c)
@@ -618,6 +632,8 @@ class MainActivity : Activity() {
             styleModes()
 
             Ui.add(body, Ui.button(this, "Save", Ui.Kind.FILLED) {
+                val err = valid()
+                if (err != null) { Toast.makeText(this, err, Toast.LENGTH_SHORT).show(); return@button }
                 Vd.saveSizeCfg(this, current())
                 val p = Vd.sizeFor(this, false)
                 Toast.makeText(this, "New displays: ${p.first}×${p.second}", Toast.LENGTH_SHORT).show()
@@ -635,14 +651,103 @@ class MainActivity : Activity() {
     private fun showMainMenu() {
         val items = ArrayList<Ui.MenuItem>()
         items.add(Ui.MenuItem("Refresh") { refresh() })
-        val sz = Vd.sizeFor(this, false)
-        items.add(Ui.MenuItem("Display size  ·  ${sz.first}×${sz.second}") { showDisplaySettings() })
-        items.add(Ui.MenuItem("Diagnostics & log" + if (moreBtn.badge) "  •" else "") { showDiagnostics() })
+        items.add(Ui.MenuItem("Settings") { showSettings() })
         if (Vd.service != null && Vd.displays.isNotEmpty()) {
             items.add(Ui.MenuItem("Stop all and destroy displays", danger = true) { confirmStopAll() })
         }
         items.add(Ui.MenuItem("PocketScreen $versionName"))
         Ui.menu(this, moreBtn, items)
+    }
+
+    private fun settingsRow(parent: LinearLayout, title: String, sub: String, onClick: () -> Unit) {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.VERTICAL
+        row.setPadding(dp(16), dp(12), dp(16), dp(12))
+        row.background = Ui.surface(this, clickable = true)
+        row.isClickable = true
+        row.isFocusable = true
+        row.setOnClickListener { onClick() }
+        row.addView(Ui.text(this, title, 15f, Ui.TEXT, bold = true))
+        row.addView(Ui.text(this, sub, 12f, Ui.MUTED))
+        Ui.add(parent, row, top = 10)
+    }
+
+    private fun settingsToggle(parent: LinearLayout, title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+        var on = checked
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(16), dp(12), dp(12), dp(12))
+        row.background = Ui.surface(this, clickable = true)
+        row.isClickable = true
+        row.isFocusable = true
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        col.addView(Ui.text(this, title, 15f, Ui.TEXT, bold = true))
+        col.addView(Ui.text(this, sub, 12f, Ui.MUTED))
+        row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+        val pill = Ui.text(this, "", 12f, Ui.TEXT, bold = true)
+        pill.gravity = Gravity.CENTER
+        pill.setPadding(dp(14), dp(6), dp(14), dp(6))
+        fun style() {
+            pill.text = if (on) "On" else "Off"
+            pill.setTextColor(if (on) Ui.ON_ACCENT else Ui.MUTED)
+            pill.background = Ui.shape(if (on) Ui.ACCENT else Ui.SURFACE2, Ui.dpf(this, 14f))
+        }
+        style()
+        row.addView(pill)
+        row.setOnClickListener { on = !on; style(); onChange(on) }
+        Ui.add(parent, row, top = 10)
+    }
+
+    private fun showSettings() {
+        Ui.sheet(this, 0.7f) { body, dlg ->
+            body.addView(Ui.text(this, "Settings", 18f, Ui.TEXT, bold = true))
+            val scroll = ScrollView(this)
+            scroll.isVerticalScrollBarEnabled = false
+            val col = LinearLayout(this)
+            col.orientation = LinearLayout.VERTICAL
+            scroll.addView(col)
+            Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
+
+            val p = Vd.sizeFor(this, false)
+            settingsRow(col, "Display size", "Portrait ${p.first}×${p.second} · ${p.third} dpi") {
+                dlg.dismiss(); showDisplaySettings()
+            }
+            settingsRow(col, "Restore sound", "Give sound back to all muted apps") {
+                bg { log(Vd.restoreAllAudio(applicationContext)) }
+                Toast.makeText(this, "Sound restored", Toast.LENGTH_SHORT).show()
+            }
+            settingsToggle(col, "Suppress keyboard requests", "Keyboard only opens from the keyboard icon in the viewer. Off by default.", AppSettings.suppressKeyboard(this)) {
+                AppSettings.setSuppressKeyboard(this, it)
+            }
+            // Debug log: file only, off by default, never shown on screen.
+            val dbgBox = LinearLayout(this)
+            dbgBox.orientation = LinearLayout.VERTICAL
+            fun showDbgRows(on: Boolean) { dbgBox.visibility = if (on) View.VISIBLE else View.GONE }
+            settingsToggle(col, "Debug log", "Saves a log file you can share. Off by default.", Debug.enabled(this)) {
+                Debug.setEnabled(this, it)
+                showDbgRows(it)
+            }
+            Ui.add(col, dbgBox)
+            settingsRow(dbgBox, "Share log file", "Send the saved log as text") {
+                val t = Debug.text(this)
+                if (t.isEmpty()) {
+                    Toast.makeText(this, "Log is empty", Toast.LENGTH_SHORT).show()
+                } else {
+                    val i = Intent(Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(Intent.EXTRA_SUBJECT, "PocketScreen debug log")
+                        .putExtra(Intent.EXTRA_TEXT, t.takeLast(200_000))
+                    startActivity(Intent.createChooser(i, "Share log"))
+                }
+            }
+            settingsRow(dbgBox, "Clear log file", "Delete everything saved so far") {
+                Debug.clear(this)
+                Toast.makeText(this, "Log cleared", Toast.LENGTH_SHORT).show()
+            }
+            showDbgRows(Debug.enabled(this))
+            Ui.add(col, Ui.text(this, "PocketScreen $versionName", 12f, Ui.MUTED), top = 20)
+        }
     }
 
     private fun confirmStopAll() {
@@ -655,79 +760,5 @@ class MainActivity : Activity() {
             }, top = 16)
             Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 4)
         }
-    }
-
-    private fun showDiagnostics() {
-        moreBtn.badge = false
-        Ui.sheet(this, 0.85f) { body, dlg ->
-            body.addView(Ui.text(this, "Diagnostics & log", 18f, Ui.TEXT, bold = true))
-
-            val scroll = ScrollView(this)
-            scroll.isVerticalScrollBarEnabled = false
-            val col = LinearLayout(this)
-            col.orientation = LinearLayout.VERTICAL
-            scroll.addView(col)
-            Ui.add(body, scroll, top = 8, h = 0, weight = 1f)
-
-            fun diag(label: String, action: () -> Unit) {
-                Ui.add(col, Ui.button(this, label, Ui.Kind.TONAL) { action() }, top = 8)
-            }
-            diag("Heartbeat test on first hidden display") { heartbeatOn(Vd.displays.firstOrNull()?.id ?: -1) }
-            diag("Heartbeat control on main display") { heartbeatOn(0) }
-            diag("Check heartbeat result") { log(analyze()) }
-            diag("Reset heartbeat file") { File(filesDir, "hb.txt").delete(); log("Heartbeat file deleted") }
-            diag("Give sound back to all muted apps") { bg { log(Vd.restoreAllAudio(applicationContext)) } }
-            diag("Show where apps are") {
-                bg { log(Vd.exec("dumpsys activity activities | grep -E 'Display #|topResumedActivity'")) }
-            }
-            diag("Show Recents entries") {
-                bg { log(Vd.exec("dumpsys activity recents | grep -E 'Recent #|baseIntent|flg=' | head -40")) }
-            }
-            diag("Show Hiber log for PocketScreen") {
-                bg { log(Vd.exec("logcat -d | grep -i Usf_Hiber | grep -i com.hiderlab | tail -15")) }
-            }
-
-            val header = Ui.text(this, "Log", 13f, Ui.MUTED, bold = true)
-            Ui.add(col, header, top = 22)
-            val tv = Ui.text(this, if (logBuf.isEmpty()) "Nothing logged yet." else logBuf.toString(), 12f, Ui.MUTED)
-            tv.typeface = android.graphics.Typeface.MONOSPACE
-            tv.setTextIsSelectable(true)
-            Ui.add(col, tv, top = 6)
-            Ui.add(col, Ui.button(this, "Clear log", Ui.Kind.TEXT) {
-                logBuf.setLength(0)
-                tv.text = "Nothing logged yet."
-            }, top = 6, w = ViewGroup.LayoutParams.WRAP_CONTENT)
-
-            logTv = tv
-            logScroll = scroll
-            logHeader = header
-            dlg.setOnDismissListener { logTv = null; logScroll = null; logHeader = null }
-        }
-    }
-
-    // ---------------------------------------------------------------- heartbeat diagnostics
-
-    private fun heartbeatOn(display: Int) {
-        if (display < 0) { log("No hidden display yet."); return }
-        bg { log("am start on $display:\n" + Vd.exec("am start --display $display -n $packageName/.HeartbeatActivity")) }
-    }
-
-    private fun analyze(): String {
-        val f = File(filesDir, "hb.txt")
-        if (!f.exists()) return "No heartbeat file yet. Run the test first."
-        val ts = f.readLines().mapNotNull { it.trim().toLongOrNull() }
-        if (ts.size < 2) return "Only ${ts.size} sample(s) so far."
-        var maxGap = 0L
-        val gaps = ArrayList<String>()
-        for (i in 1 until ts.size) {
-            val g = ts[i] - ts[i - 1]
-            if (g > maxGap) maxGap = g
-            if (g > 3000) gaps.add("  at +${(ts[i - 1] - ts[0]) / 1000}s: frozen for ${g / 1000}s")
-        }
-        val span = (ts.last() - ts.first()) / 1000
-        val age = (System.currentTimeMillis() - ts.last()) / 1000
-        val verdict = if (gaps.isEmpty()) "ALIVE: no gaps over 3s" else "FROZEN at times: ${gaps.size} gap(s)"
-        return "$verdict\nsamples=${ts.size} span=${span}s maxGap=${maxGap / 1000}s lastBeat=${age}s ago\n" +
-            gaps.take(15).joinToString("\n")
     }
 }
