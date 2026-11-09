@@ -366,9 +366,10 @@ class MainActivity : Activity() {
                             runOnUiThread { refreshTasks() }
                         }
                     },
-                    Ui.MenuItem("Close display, keep app") {
+                    Ui.MenuItem("Auto-stop for this app") { showAppAutoStop(r.pkg) },
+                    Ui.MenuItem("Close display, keep app in Recents") {
                         bg {
-                            log("Detach ${r.pkg}:\n" + Vd.detachApp(applicationContext, r.taskId, r.pkg, r.display.id))
+                            log("Detach ${r.pkg}:\n" + Vd.detachApp(applicationContext, r.pkg, r.display.id))
                             runOnUiThread { refresh() }
                         }
                     },
@@ -842,7 +843,7 @@ class MainActivity : Activity() {
         val pill = Ui.text(this, "", 12f, Ui.TEXT, bold = true)
         pill.setPadding(dp(14), dp(6), dp(14), dp(6))
         fun style() {
-            val on = options[idx].second != 0
+            val on = options[idx].second > 0
             pill.text = options[idx].first
             pill.setTextColor(if (on) Ui.ON_ACCENT else Ui.MUTED)
             pill.background = Ui.shape(if (on) Ui.ACCENT else Ui.SURFACE2, Ui.dpf(this, 14f))
@@ -851,6 +852,24 @@ class MainActivity : Activity() {
         row.addView(pill)
         row.setOnClickListener { idx = (idx + 1) % options.size; style(); onChange(options[idx].second) }
         Ui.add(parent, row, top = 10)
+    }
+
+    private fun showAppAutoStop(pkg: String) {
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, Apps.label(this, pkg), 18f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "Auto-stop for this app only. \"Default\" uses the value from Settings.", 13f, Ui.MUTED), top = 2)
+            val gb = AppSettings.autoStopBattery(this)
+            val gm = AppSettings.autoStopMinutes(this)
+            fun pctLabel(v: Int) = if (v == 0) "Off" else "$v%"
+            fun minLabel(v: Int) = when { v == 0 -> "Off"; v < 60 -> "$v min"; v == 60 -> "1 hour"; else -> "${v / 60} hours" }
+            settingsCycle(body, "Stop at low battery",
+                listOf("Default (${pctLabel(gb)})" to -1, "Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "30%" to 30),
+                AppSettings.appBattery(this, pkg)) { AppSettings.setAppBattery(this, pkg, it) }
+            settingsCycle(body, "Stop after running",
+                listOf("Default (${minLabel(gm)})" to -1, "Off" to 0, "30 min" to 30, "1 hour" to 60, "2 hours" to 120, "4 hours" to 240),
+                AppSettings.appMinutes(this, pkg)) { AppSettings.setAppMinutes(this, pkg, it) }
+            Ui.add(body, Ui.button(this, "Done", Ui.Kind.FILLED) { dlg.dismiss() }, top = 18)
+        }
     }
 
     private fun showSettings() {
@@ -871,14 +890,14 @@ class MainActivity : Activity() {
                 bg { log(Vd.restoreAllAudio(applicationContext)) }
                 Toast.makeText(this, "Sound restored", Toast.LENGTH_SHORT).show()
             }
-            Ui.add(col, Ui.text(this, "Auto-stop (tap to change)", 12f, Ui.MUTED), top = 16)
-            settingsCycle(col, "Stop when battery is low",
+            Ui.add(col, Ui.text(this, "Auto-stop defaults (tap to change)", 12f, Ui.MUTED), top = 16)
+            settingsCycle(col, "Stop at low battery",
                 listOf("Off" to 0, "10%" to 10, "15%" to 15, "20%" to 20, "30%" to 30),
                 AppSettings.autoStopBattery(this)) { AppSettings.setAutoStopBattery(this, it) }
             settingsCycle(col, "Stop app after running",
                 listOf("Off" to 0, "30 min" to 30, "1 hour" to 60, "2 hours" to 120, "4 hours" to 240),
                 AppSettings.autoStopMinutes(this)) { AppSettings.setAutoStopMinutes(this, it) }
-            Ui.add(col, Ui.text(this, "Stopping also removes the app's display. Battery stop only applies when not charging.", 11f, Ui.MUTED), top = 6)
+            Ui.add(col, Ui.text(this, "Used by apps with no setting of their own. Set one per app from its ⋮ menu. Stopping also removes the display. Battery stop only applies when not charging.", 11f, Ui.MUTED), top = 6)
             Ui.add(col, Ui.text(this, "Options", 12f, Ui.MUTED), top = 16)
             settingsToggle(col, "Show memory and CPU", "On each running app. Turn off for faster refreshing.", AppSettings.showStats(this)) {
                 AppSettings.setShowStats(this, it)

@@ -25,4 +25,13 @@ object AppSettings {
     /** Show memory and CPU on each running app. On by default; turning it off makes refreshing faster. */
     fun showStats(c: Context): Boolean = p(c).getBoolean("show_stats", true)
     fun setShowStats(c: Context, on: Boolean) { p(c).edit().putBoolean("show_stats", on).apply() }
+
+    /** Per-app auto-stop. -1 means "use the default from Settings", 0 means off. */
+    fun appBattery(c: Context, pkg: String): Int = p(c).getInt("auto_bat_$pkg", -1)
+    fun setAppBattery(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_bat_$pkg", v).apply() }
+    fun appMinutes(c: Context, pkg: String): Int = p(c).getInt("auto_min_$pkg", -1)
+    fun setAppMinutes(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_min_$pkg", v).apply() }
+
+    fun effectiveBattery(c: Context, pkg: String): Int = appBattery(c, pkg).let { if (it < 0) autoStopBattery(c) else it }
+    fun effectiveMinutes(c: Context, pkg: String): Int = appMinutes(c, pkg).let { if (it < 0) autoStopMinutes(c) else it }
 }

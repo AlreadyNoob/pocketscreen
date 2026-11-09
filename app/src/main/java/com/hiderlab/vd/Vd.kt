@@ -16,7 +16,7 @@ object Vd {
         val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
     }
 
-    private const val LAUNCH_FLAGS = 0x10800000 // FLAG_ACTIVITY_NEW_TASK (0x10000000) | FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS (0x00800000)
+    private const val LAUNCH_FLAGS = 0x10000000 // FLAG_ACTIVITY_NEW_TASK only, so the task can appear in Recents
 
     @Volatile var service: IVdService? = null
     @Volatile var displays: List<Disp> = emptyList()
@@ -161,18 +161,15 @@ object Vd {
     }
 
     /**
-     * Moves one app's task to the phone's own screen, sends it to the background, and removes the
-     * hidden display if it is then empty. The app keeps running. If the move fails, nothing is removed.
+     * Removes the app's hidden display (if nothing else is on it) and leaves the app alone: it is
+     * not launched anywhere and not stopped, it just stays in Recents.
      */
-    fun detachApp(ctx: Context, taskId: Int, pkg: String, displayId: Int): String {
-        val r = exec("am display move-stack $taskId 0")
-        if (Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Could not move the app: $r"
-        exec("input keyevent KEYCODE_HOME")
+    fun detachApp(ctx: Context, pkg: String, displayId: Int): String {
         restoreAudio(ctx, pkg)
         clearSession(ctx, pkg)
-        Thread.sleep(600)
-        if (tasks(displayId).isEmpty()) releaseOnly(ctx, displayId)
-        return r
+        val others = tasks(displayId).any { it.second != pkg }
+        if (!others) releaseOnly(ctx, displayId)
+        return if (others) "Display kept: other apps are on it." else "Display $displayId removed."
     }
 
     // ---- memory and CPU ----
@@ -365,7 +362,7 @@ object Vd {
             if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
-        // -f = NEW_TASK | EXCLUDE_FROM_RECENTS, so the task is not listed in the phone's Recents.
+        // -f = NEW_TASK. The task is not excluded from Recents, so it stays there after its display is closed.
         return exec("am start --display $display -f $LAUNCH_FLAGS -n $comp")
     }
 

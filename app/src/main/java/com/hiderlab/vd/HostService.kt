@@ -50,30 +50,27 @@ class HostService : Service() {
         Vd.refreshInfo()
         if (Vd.displays.isEmpty()) return
 
-        val limit = AppSettings.autoStopBattery(ctx)
-        if (limit > 0) {
-            val b = ctx.registerReceiver(null, IntentFilter(I2.ACTION_BATTERY_CHANGED))
-            val level = b?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-            val scale = b?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-            val status = b?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-            val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
-            if (!charging && pct <= limit) {
-                Debug.write("Auto-stop: battery $pct% <= $limit%")
-                Vd.stopAll(ctx)
-                return
-            }
-        }
+        val b = ctx.registerReceiver(null, IntentFilter(I2.ACTION_BATTERY_CHANGED))
+        val level = b?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = b?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val status = b?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
 
-        val maxMin = AppSettings.autoStopMinutes(ctx)
-        if (maxMin > 0) {
-            for (d in Vd.displays.toList()) {
-                for (pkg in Vd.tasks(d.id).map { it.second }.distinct()) {
-                    val m = Vd.sessionMinutes(ctx, pkg) ?: continue
-                    if (m >= maxMin) {
-                        Debug.write("Auto-stop: $pkg ran ${m}m >= ${maxMin}m")
-                        Vd.stopAppAndDisplay(ctx, pkg)
-                    }
+        // Each app uses its own limits, or the defaults from Settings if it has none.
+        for (d in Vd.displays.toList()) {
+            for (pkg in Vd.tasks(d.id).map { it.second }.distinct()) {
+                val batLimit = AppSettings.effectiveBattery(ctx, pkg)
+                if (batLimit > 0 && !charging && pct <= batLimit) {
+                    Debug.write("Auto-stop: $pkg, battery $pct% <= $batLimit%")
+                    Vd.stopAppAndDisplay(ctx, pkg)
+                    continue
+                }
+                val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
+                val m = Vd.sessionMinutes(ctx, pkg) ?: continue
+                if (maxMin > 0 && m >= maxMin) {
+                    Debug.write("Auto-stop: $pkg ran ${m}m >= ${maxMin}m")
+                    Vd.stopAppAndDisplay(ctx, pkg)
                 }
             }
         }
