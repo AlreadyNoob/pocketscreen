@@ -91,16 +91,50 @@ object Vd {
         }
     }
 
+    // ---- display size settings ----
+
+    /** How big new hidden displays are. Saved on the phone, applies to displays created from now on. */
+    data class SizeCfg(val matchRatio: Boolean, val width: Int, val customH: Int, val dpi: Int)
+
+    const val DEF_WIDTH = 720
+    const val DEF_DPI = 320
+
+    private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("display", Context.MODE_PRIVATE)
+
+    fun sizeCfg(ctx: Context): SizeCfg {
+        val p = prefs(ctx)
+        return SizeCfg(
+            p.getBoolean("match", true),
+            p.getInt("w", DEF_WIDTH),
+            p.getInt("h", 1600),
+            p.getInt("dpi", DEF_DPI)
+        )
+    }
+
+    fun saveSizeCfg(ctx: Context, c: SizeCfg) {
+        prefs(ctx).edit().putBoolean("match", c.matchRatio).putInt("w", c.width)
+            .putInt("h", c.customH).putInt("dpi", c.dpi).apply()
+    }
+
+    private fun even(v: Int) = v and 1.inv()
+
+    /** The (width, height, dpi) a new display would get. Width/height are already swapped for landscape. */
+    fun sizeFor(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null): Triple<Int, Int, Int> {
+        val c = cfg ?: sizeCfg(ctx)
+        val dm = ctx.resources.displayMetrics
+        val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
+        // Portrait shape first: w is the short side, h the long side.
+        var w = even(c.width.coerceIn(240, 2160))
+        var h = if (c.matchRatio) (w * ratio).toInt() else c.customH
+        h = even(h.coerceIn(240, 3840))
+        val dpi = c.dpi.coerceIn(120, 640)
+        return if (landscape) Triple(h, w, dpi) else Triple(w, h, dpi)
+    }
+
     /** Creates a display and returns its id, or -1 on failure. */
     fun createDisplay(ctx: Context, landscape: Boolean): Int {
         val s = service ?: run { log("Not connected"); return -1 }
-        // 720 px wide, same shape as the real screen, so apps lay out as they would on the phone.
-        val dm = ctx.resources.displayMetrics
-        val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
-        var w = 720
-        var h = (w * ratio).toInt() and 1.inv()
-        val dpi = 320
-        if (landscape) { val t = w; w = h; h = t }
+        val (w, h, dpi) = sizeFor(ctx, landscape)
         val r = try { s.createDisplay(w, h, dpi) } catch (t: Throwable) { "ERR: $t" }
         log("createDisplay: $r")
         var id = -1
@@ -121,11 +155,14 @@ object Vd {
     /**
      * Every app gets its own display. Android only keeps the top app on a display resumed, so a
      * second app on the same display would freeze the first. An empty display of the right
-     * orientation is reused; otherwise a new one is created. Returns its id, or -1.
+     * size is reused; otherwise a new one is created. Returns its id, or -1.
      */
-    fun freeDisplay(ctx: Context, landscape: Boolean): Int =
-        displays.firstOrNull { it.landscape == landscape && tasks(it.id).isEmpty() }?.id
+    fun freeDisplay(ctx: Context, landscape: Boolean): Int {
+        // Only reuse a display that already has exactly the size a new one would get now.
+        val (w, h, _) = sizeFor(ctx, landscape)
+        return displays.firstOrNull { it.w == w && it.h == h && tasks(it.id).isEmpty() }?.id
             ?: createDisplay(ctx, landscape)
+    }
 
     fun launch(ctx: Context, pkg: String, display: Int): String {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()

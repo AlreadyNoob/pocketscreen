@@ -12,6 +12,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputType
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
@@ -458,7 +459,12 @@ class MainActivity : Activity() {
             tile("Portrait", false, true)
             tile("Landscape", true, false)
             Ui.add(body, tiles, top = 16)
-            Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 8)
+            val p = Vd.sizeFor(this, false)
+            val l = Vd.sizeFor(this, true)
+            Ui.add(body, Ui.button(this, "Size ${p.first}×${p.second} / ${l.first}×${l.second}  ·  Change", Ui.Kind.TEXT) {
+                dlg.dismiss(); showDisplaySettings()
+            }, top = 8)
+            Ui.add(body, Ui.button(this, "Cancel", Ui.Kind.TEXT) { dlg.dismiss() }, top = 0)
         }
     }
 
@@ -492,11 +498,125 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------------------------------------------------------------- display size
+
+    private fun showDisplaySettings() {
+        val cfg = Vd.sizeCfg(this)
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, "Display size", 18f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "Applies to displays created from now on. Existing displays keep their size.", 13f, Ui.MUTED), top = 2)
+
+            var match = cfg.matchRatio
+
+            fun field(hint: String, value: Int): EditText {
+                val e = EditText(this)
+                e.hint = hint
+                e.setHintTextColor(Ui.MUTED)
+                e.setTextColor(Ui.TEXT)
+                e.textSize = 15f
+                e.inputType = InputType.TYPE_CLASS_NUMBER
+                e.isSingleLine = true
+                e.setPadding(dp(16), dp(12), dp(16), dp(12))
+                e.background = Ui.shape(Ui.SURFACE2, Ui.dpf(this, 14f))
+                e.setText(value.toString())
+                return e
+            }
+            fun labeled(parent: LinearLayout, label: String, e: EditText, top: Int) {
+                Ui.add(parent, Ui.text(this, label, 12f, Ui.MUTED), top = top)
+                Ui.add(parent, e, top = 4)
+            }
+
+            // mode toggle
+            val modeRow = LinearLayout(this)
+            modeRow.orientation = LinearLayout.HORIZONTAL
+            Ui.add(body, modeRow, top = 14)
+
+            val wField = field("Width", cfg.width)
+            val hField = field("Height", cfg.customH)
+            val dpiField = field("DPI", cfg.dpi)
+            val preview = Ui.text(this, "", 13f, Ui.ACCENT)
+
+            val fields = LinearLayout(this)
+            fields.orientation = LinearLayout.VERTICAL
+            Ui.add(body, fields, top = 4)
+            labeled(fields, "Width (px, portrait)", wField, 12)
+            val hBox = LinearLayout(this)
+            hBox.orientation = LinearLayout.VERTICAL
+            labeled(hBox, "Height (px, portrait)", hField, 12)
+            Ui.add(fields, hBox)
+            labeled(fields, "Density (DPI). Lower = smaller apps, more fits on screen", dpiField, 12)
+
+            // width presets
+            val presets = LinearLayout(this)
+            presets.orientation = LinearLayout.HORIZONTAL
+            for (pw in intArrayOf(540, 720, 1080)) {
+                val b = Ui.button(this, "${pw}", Ui.Kind.TONAL) { wField.setText(pw.toString()) }
+                val lp = LinearLayout.LayoutParams(0, -2, 1f)
+                lp.rightMargin = dp(8)
+                presets.addView(b, lp)
+            }
+            Ui.add(fields, presets, top = 8)
+            Ui.add(body, preview, top = 12)
+
+            fun current(): Vd.SizeCfg = Vd.SizeCfg(
+                match,
+                wField.text.toString().toIntOrNull() ?: Vd.DEF_WIDTH,
+                hField.text.toString().toIntOrNull() ?: 1600,
+                dpiField.text.toString().toIntOrNull() ?: Vd.DEF_DPI
+            )
+            fun updatePreview() {
+                val c = current()
+                val p = Vd.sizeFor(this, false, c)
+                val l = Vd.sizeFor(this, true, c)
+                preview.text = "Portrait ${p.first}×${p.second}   ·   Landscape ${l.first}×${l.second}   ·   ${p.third} dpi"
+            }
+
+            fun styleModes() {
+                modeRow.removeAllViews()
+                fun mode(label: String, isMatch: Boolean, first: Boolean) {
+                    val b = Ui.button(this, label, if (match == isMatch) Ui.Kind.FILLED else Ui.Kind.TONAL) {
+                        match = isMatch
+                        styleModes()
+                    }
+                    val lp = LinearLayout.LayoutParams(0, -2, 1f)
+                    if (!first) lp.leftMargin = dp(8)
+                    modeRow.addView(b, lp)
+                }
+                mode("Match screen ratio", true, true)
+                mode("Custom size", false, false)
+                hBox.visibility = if (match) View.GONE else View.VISIBLE
+                updatePreview()
+            }
+            val watcher = object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) = updatePreview()
+                override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+                override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+            }
+            wField.addTextChangedListener(watcher)
+            hField.addTextChangedListener(watcher)
+            dpiField.addTextChangedListener(watcher)
+            styleModes()
+
+            Ui.add(body, Ui.button(this, "Save", Ui.Kind.FILLED) {
+                Vd.saveSizeCfg(this, current())
+                val p = Vd.sizeFor(this, false)
+                Toast.makeText(this, "New displays: ${p.first}×${p.second}", Toast.LENGTH_SHORT).show()
+                dlg.dismiss()
+            }, top = 14)
+            Ui.add(body, Ui.button(this, "Reset to default", Ui.Kind.TEXT) {
+                Vd.saveSizeCfg(this, Vd.SizeCfg(true, Vd.DEF_WIDTH, 1600, Vd.DEF_DPI))
+                dlg.dismiss()
+            }, top = 0)
+        }
+    }
+
     // ---------------------------------------------------------------- menus
 
     private fun showMainMenu() {
         val items = ArrayList<Ui.MenuItem>()
         items.add(Ui.MenuItem("Refresh") { refresh() })
+        val sz = Vd.sizeFor(this, false)
+        items.add(Ui.MenuItem("Display size  ·  ${sz.first}×${sz.second}") { showDisplaySettings() })
         items.add(Ui.MenuItem("Diagnostics & log" + if (moreBtn.badge) "  •" else "") { showDiagnostics() })
         if (Vd.service != null && Vd.displays.isNotEmpty()) {
             items.add(Ui.MenuItem("Stop all and destroy displays", danger = true) { confirmStopAll() })

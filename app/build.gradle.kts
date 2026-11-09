@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = runNumber
-        versionName = "0.7.$runNumber"
+        versionName = "0.8.$runNumber"
     }
     buildFeatures { aidl = true }
     compileOptions {
