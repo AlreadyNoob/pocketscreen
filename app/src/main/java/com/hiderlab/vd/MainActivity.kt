@@ -336,7 +336,7 @@ class MainActivity : Activity() {
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
-            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"}, ${sz.first}×${sz.second} at ${sz.third} DPI", 13f, Ui.MUTED)
+            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"}, ${sz.first}x${sz.second}, ${sz.third} DPI, ${hzText(AppSettings.effectiveRefreshRate(this, pkg))}", 13f, Ui.MUTED)
                 .also { it.maxLines = 2; it.ellipsize = TextUtils.TruncateAt.END })
             if (cfg != null) col.addView(Ui.text(this, "Custom settings", 12f, Ui.ACCENT))
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
@@ -468,11 +468,11 @@ class MainActivity : Activity() {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
-        fun detail(d: Vd.Disp) = "${if (d.landscape) "Landscape" else "Portrait"}, ${d.w}×${d.h}" +
-            (if (d.dpi > 0) " at ${d.dpi} DPI" else "")
+        fun detail(d: Vd.Disp) = "${if (d.landscape) "Landscape" else "Portrait"}, ${d.w}x${d.h}" +
+            (if (d.dpi > 0) ", ${d.dpi} DPI" else "")
         fun detailLines(d: Vd.Disp, col: LinearLayout) {
             col.addView(Ui.text(this, detail(d), 13f, Ui.MUTED).also { it.maxLines = 2; it.ellipsize = TextUtils.TruncateAt.END })
-            col.addView(Ui.text(this, "Display ${d.id}", 12f, Ui.MUTED))
+            col.addView(Ui.text(this, "Display #${d.id}, ${hzText(d.fps)}", 12f, Ui.MUTED))
         }
 
         val rows = ArrayList<View>()
@@ -712,7 +712,7 @@ class MainActivity : Activity() {
             fun sizeLabel() {
                 val c = Vd.appCfg(this, a.pkg)
                 val p = Vd.sizeFor(this, sel, c)
-                sizeRow.text = (if (c != null) "Custom size" else "Default size") + "  ·  ${p.first}×${p.second}  ·  ${p.third} DPI"
+                sizeRow.text = (if (c != null) "Custom size" else "Default size") + "  ·  ${p.first}x${p.second}  ·  ${p.third} DPI"
             }
             sizeRow.setOnClickListener {
                 val c = Vd.appCfg(this, a.pkg) ?: Vd.sizeCfg(this)
@@ -827,7 +827,7 @@ class MainActivity : Activity() {
             onSave = { c ->
                 Vd.saveSizeCfg(this, c)
                 val p = Vd.sizeFor(this, false)
-                Toast.makeText(this, "New displays: ${p.first}×${p.second}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "New displays: ${p.first}x${p.second}", Toast.LENGTH_SHORT).show()
             },
             onReset = { Vd.saveSizeCfg(this, Vd.SizeCfg(true, Vd.DEF_WIDTH, 1600, Vd.DEF_DPI)) }
         )
@@ -935,7 +935,7 @@ class MainActivity : Activity() {
                 val c = current()
                 val p = Vd.sizeFor(this, false, c)
                 val l = Vd.sizeFor(this, true, c)
-                preview.text = "Portrait ${p.first}×${p.second}   ·   Landscape ${l.first}×${l.second}   ·   ${p.third} DPI"
+                preview.text = "Portrait ${p.first}x${p.second}   ·   Landscape ${l.first}x${l.second}   ·   ${p.third} DPI"
             }
 
             fun styleModes() {
@@ -1125,6 +1125,9 @@ class MainActivity : Activity() {
         return row
     }
 
+    /** 0 means Auto (the phone's own rate). */
+    private fun hzText(hz: Int): String = if (hz > 0) "$hz Hz" else "Auto"
+
     private fun hzLabel(v: Int, defaultValue: Int?): String = when {
         v < 0 -> "Default (${hzLabel(defaultValue ?: 0, null)})"
         v == 0 -> "Auto"
@@ -1252,7 +1255,7 @@ class MainActivity : Activity() {
             val isPreset = Vd.presetOf(this, pkg) != null
             section("Display", listOf(
                 settingsRow(if (isPreset) "Orientation and size" else "Display size",
-                    "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} DPI") {
+                    "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}x${sz.second} · ${sz.third} DPI") {
                     dlg.dismiss()
                     if (isPreset) askOrientation(Apps.App(Apps.label(this, pkg), pkg, null), landscape)
                     else showSizeEditor(
@@ -1304,7 +1307,7 @@ class MainActivity : Activity() {
 
             val p = Vd.sizeFor(this, false)
             section("General", listOf(
-                settingsRow("Display size", "Portrait ${p.first}×${p.second} · ${p.third} DPI") {
+                settingsRow("Display size", "Portrait ${p.first}x${p.second} · ${p.third} DPI") {
                     dlg.dismiss(); showDisplaySettings()
                 },
                 settingsRefresh(AppSettings.refreshRate(this), null) { AppSettings.setRefreshRate(this, it) },

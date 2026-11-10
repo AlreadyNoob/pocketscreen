@@ -74,7 +74,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
                 ui.post {
                     if (gone) { leave(); return@post }
                     rot = r
-                    val base = (if (landscape) "Landscape" else "Portrait") + " · ${dw}×${dh}" +
+                    val base = (if (landscape) "Landscape" else "Portrait") + " · ${dw}x${dh}" +
                         (if (rot != 0) " · rotated ${rot * 90}°" else "")
                     // Only touch the view when something changed: re-setting the same text still
                     // triggers a layout pass, which shows up as a hitch once a second.

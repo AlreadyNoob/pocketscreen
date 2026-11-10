@@ -48,7 +48,7 @@ class HostService : Service() {
     }
 
     @Volatile private var watching = false
-    @Volatile private var lastCount = -1
+    @Volatile private var lastSig = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -79,26 +79,27 @@ class HostService : Service() {
 
     private val changeListener = Runnable { Thread { refreshNotification() }.start() }
 
-    /** Number of distinct apps currently running on the hidden displays. */
-    private fun runningApps(): Int =
-        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct().size
+    /** Apps currently running on the hidden displays. */
+    private fun runningApps(): List<String> =
+        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct()
 
-    private fun statusText(n: Int): String = when (n) {
+    private fun statusText(apps: List<String>): String = when (apps.size) {
         0 -> "Hidden display is ready"
         1 -> "1 app running in the background"
-        else -> "$n apps running in the background"
+        else -> "${apps.size} apps running in the background"
     }
 
-    /** Rebuilds the ongoing notification when the number of running apps has changed. */
+    /** Rebuilds the ongoing notification when the set of running apps has changed. */
     private fun refreshNotification() {
         if (!watching || Vd.service == null) return
-        val n = try { runningApps() } catch (_: Throwable) { return }
-        if (n == lastCount) return
-        lastCount = n
-        try { getSystemService(NotificationManager::class.java).notify(1, buildNotification(n)) } catch (_: Throwable) {}
+        val apps = try { runningApps() } catch (_: Throwable) { return }
+        val sig = apps.sorted().toString()
+        if (sig == lastSig) return
+        lastSig = sig
+        try { getSystemService(NotificationManager::class.java).notify(1, buildNotification(apps)) } catch (_: Throwable) {}
     }
 
-    private fun buildNotification(count: Int): Notification {
+    private fun buildNotification(apps: List<String>): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -110,7 +111,7 @@ class HostService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_pocketscreen)
             .setContentTitle("PocketScreen")
-            .setContentText(statusText(count))
+            .setContentText(statusText(apps))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -164,8 +165,8 @@ class HostService : Service() {
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Hidden display", NotificationManager.IMPORTANCE_LOW))
 
         // No binder calls on the main thread: show a placeholder now, the background refresh fills in the count.
-        lastCount = -1
-        val n = buildNotification(0)
+        lastSig = ""
+        val n = buildNotification(emptyList())
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
