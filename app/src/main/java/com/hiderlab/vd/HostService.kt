@@ -9,10 +9,13 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.os.Build
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent as I2
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.IBinder
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Foreground service: keeps this app's process alive while the hidden display is up. */
 class HostService : Service() {
@@ -55,6 +58,7 @@ class HostService : Service() {
     override fun onDestroy() {
         watching = false
         Vd.listeners.remove(changeListener)
+        if (batteryRegistered) { try { unregisterReceiver(batteryReceiver) } catch (_: Throwable) {}; batteryRegistered = false }
         super.onDestroy()
     }
 
@@ -72,7 +76,7 @@ class HostService : Service() {
                 if (ticks % 6 == 0) {
                     try { checkLimits(ctx) } catch (t: Throwable) { Debug.write("watchdog: $t") }
                 }
-                refreshNotification()
+                try { refreshNotification() } catch (_: Throwable) {}
             }
         }.start()
     }
@@ -120,12 +124,41 @@ class HostService : Service() {
             .build()
     }
 
-    private fun checkLimits(ctx: android.content.Context) {
-        if (Vd.service == null) return
+    private val checking = AtomicBoolean(false)
+    @Volatile private var lastCheck = 0L
+    private var batteryRegistered = false
+
+    /** Battery level or temperature changed: check the limits right away instead of waiting for the next tick. */
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            if (System.currentTimeMillis() - lastCheck < 5_000L) return
+            val ctx = applicationContext
+            Thread { checkLimits(ctx) }.start()
+        }
+    }
+
+    private fun checkLimits(ctx: Context) {
+        if (!checking.compareAndSet(false, true)) return
+        try {
+            lastCheck = System.currentTimeMillis()
+            doCheckLimits(ctx)
+        } catch (t: Throwable) {
+            Debug.write("watchdog: $t")
+        } finally {
+            checking.set(false)
+            lastCheck = System.currentTimeMillis()
+        }
+    }
+
+    private fun doCheckLimits(ctx: Context) {
+        if (Vd.service == null) { Vd.connect(ctx); return }
         Vd.refreshInfo()
-        // Note apps that died on their own, even if their display is already gone.
-        val onDisplays = Vd.displays.flatMap { d -> Vd.tasks(d.id).map { it.second } }.toSet()
-        for (c in Vd.checkCrashes(ctx, onDisplays, emptySet())) notifyCrash(ctx, c)
+        // Note apps that died on their own, even if their display is already gone. A failure here
+        // must not stop the limits below from being checked.
+        try {
+            val onDisplays = Vd.displays.flatMap { d -> Vd.tasks(d.id).map { it.second } }.toSet()
+            for (c in Vd.checkCrashes(ctx, onDisplays, emptySet())) notifyCrash(ctx, c)
+        } catch (t: Throwable) { Debug.write("crash check: $t") }
         if (Vd.displays.isEmpty()) return
 
         val b = ctx.registerReceiver(null, IntentFilter(I2.ACTION_BATTERY_CHANGED))
@@ -134,23 +167,25 @@ class HostService : Service() {
         val status = b?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
         val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
+        // Reported in tenths of a degree Celsius.
+        val tempC: Float? = b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+            ?.takeIf { it != Int.MIN_VALUE }?.let { it / 10f }
 
-        // Each app uses its own limits, or the defaults from Settings if it has none.
-        for (d in Vd.displays.toList()) {
-            for (pkg in Vd.tasks(d.id).map { it.second }.distinct()) {
-                val batLimit = AppSettings.effectiveBattery(ctx, pkg)
-                if (batLimit > 0 && !charging && pct <= batLimit) {
-                    Debug.write("Auto-stop: $pkg, battery $pct% <= $batLimit%")
-                    Vd.stopAppAndDisplay(ctx, pkg)
-                    continue
-                }
-                val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
-                val m = Vd.sessionMinutes(ctx, pkg) ?: continue
-                if (maxMin > 0 && m >= maxMin) {
-                    Debug.write("Auto-stop: $pkg ran ${m}m >= ${maxMin}m")
-                    Vd.stopAppAndDisplay(ctx, pkg)
-                }
-            }
+        // Each app uses its own limits, or the defaults from Settings if it has none. Whatever trips,
+        // the result is the same: the app is force-stopped and its display is removed.
+        for (pkg in Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct()) {
+            val tempLimit = AppSettings.effectiveTemp(ctx, pkg)
+            val batLimit = AppSettings.effectiveBattery(ctx, pkg)
+            val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
+            val ran = Vd.sessionMinutes(ctx, pkg)
+            val reason = when {
+                tempLimit > 0 && tempC != null && tempC >= tempLimit -> "phone overheating, $tempC°C >= $tempLimit°C"
+                batLimit > 0 && !charging && pct <= batLimit -> "battery $pct% <= $batLimit%"
+                maxMin > 0 && ran != null && ran >= maxMin -> "ran ${ran}m >= ${maxMin}m"
+                else -> null
+            } ?: continue
+            Debug.write("Auto-stop: $pkg, $reason")
+            Vd.stopAppAndDisplay(ctx, pkg)
         }
     }
 
@@ -174,6 +209,12 @@ class HostService : Service() {
         }
         Vd.listeners.remove(changeListener)
         Vd.listeners.add(changeListener)
+        if (!batteryRegistered) {
+            val f = IntentFilter(I2.ACTION_BATTERY_CHANGED)
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(batteryReceiver, f, Context.RECEIVER_NOT_EXPORTED)
+            else registerReceiver(batteryReceiver, f)
+            batteryRegistered = true
+        }
         startWatchdog()
         Thread { refreshNotification() }.start()
         return START_NOT_STICKY

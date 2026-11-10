@@ -150,15 +150,20 @@ object Vd {
         return r
     }
 
-    /** Force-stops an app, then removes its display if nothing else is left on it. */
+    /**
+     * Force-stops an app, then removes its display. The display is removed even if the app's task
+     * lingers for a moment; it is only kept when a different app is still running on it.
+     */
     fun stopAppAndDisplay(ctx: Context, pkg: String): String {
         val id = displayOf(pkg)
-        val r = stopApp(ctx, pkg)
+        var r = stopApp(ctx, pkg)
         if (id != null) {
-            // Remove the display as soon as the app's task is gone instead of waiting a fixed time.
             var tries = 0
-            while (tries < 10 && tasks(id).isNotEmpty()) { Thread.sleep(100); tries++ }
-            if (tasks(id).isEmpty()) releaseOnly(ctx, id)
+            while (tries < 30 && tasks(id).any { it.second == pkg }) {
+                Thread.sleep(100); tries++
+                if (tries == 15) r = exec("am force-stop $pkg") // still there after 1.5 s: ask again
+            }
+            if (tasks(id).none { it.second != pkg }) releaseOnly(ctx, id)
         }
         return r
     }

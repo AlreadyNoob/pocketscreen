@@ -1031,10 +1031,13 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun limitLabel(isBattery: Boolean, v: Int, defaultValue: Int?): String = when {
-        v < 0 -> "Default (${limitLabel(isBattery, defaultValue ?: 0, null)})"
+    private enum class Limit { BATTERY, MINUTES, TEMP }
+
+    private fun limitLabel(kind: Limit, v: Int, defaultValue: Int?): String = when {
+        v < 0 -> "Default (${limitLabel(kind, defaultValue ?: 0, null)})"
         v == 0 -> "Off"
-        isBattery -> "$v%"
+        kind == Limit.BATTERY -> "$v%"
+        kind == Limit.TEMP -> "$v°C"
         v < 60 -> "$v min"
         v == 60 -> "1 hour"
         v % 60 == 0 -> "${v / 60} hours"
@@ -1065,7 +1068,7 @@ class MainActivity : Activity() {
      * custom number. [defaultValue] non-null means this is a per-app row that can fall back to a default.
      */
     private fun settingsLimit(
-        title: String, isBattery: Boolean,
+        title: String, kind: Limit,
         current: Int, defaultValue: Int?, onChange: (Int) -> Unit
     ): View {
         var value = current
@@ -1073,7 +1076,7 @@ class MainActivity : Activity() {
         pill.setPadding(dp(14), dp(7), dp(14), dp(7))
         fun style() {
             val on = value > 0 || (value < 0 && (defaultValue ?: 0) > 0)
-            pill.text = limitLabel(isBattery, value, defaultValue)
+            pill.text = limitLabel(kind, value, defaultValue)
             pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
             pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
         }
@@ -1090,25 +1093,30 @@ class MainActivity : Activity() {
                 Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
 
                 fun pick(v: Int) { value = v; style(); onChange(v); dlg.dismiss() }
-                val choices = if (isBattery) listOf(10, 15, 20, 30, 50) else listOf(15, 30, 60, 120, 240)
+                val choices = when (kind) {
+                    Limit.BATTERY -> listOf(10, 15, 20, 30, 50)
+                    Limit.TEMP -> listOf(40, 42, 45, 48, 50)
+                    Limit.MINUTES -> listOf(15, 30, 60, 120, 240)
+                }
                 val opts = ArrayList<Pair<String, Int>>()
-                if (defaultValue != null) opts.add(limitLabel(isBattery, -1, defaultValue) to -1)
+                if (defaultValue != null) opts.add(limitLabel(kind, -1, defaultValue) to -1)
                 // When the default is already Off, a separate "Off" would just repeat it.
                 if (defaultValue == null || defaultValue != 0) opts.add("Off" to 0)
-                for (c in choices) opts.add(limitLabel(isBattery, c, null) to c)
+                for (c in choices) opts.add(limitLabel(kind, c, null) to c)
                 // An explicit Off with a default of Off means the same as "Default (Off)".
                 val cur = if (defaultValue == 0 && value == 0) -1 else value
                 Ui.group(col, opts.map { (label, v) -> optionRow(label, cur == v) { pick(v) } }, top = 14)
 
-                Ui.add(col, Ui.text(this, if (isBattery) "Custom battery level (%, 1–99)" else "Custom time (minutes, 1–1440)", 13f, Ui.MUTED), top = 22)
-                val max = if (isBattery) 99 else 1440
+                Ui.add(col, Ui.text(this, when (kind) { Limit.BATTERY -> "Custom battery level (%, 1–99)"; Limit.TEMP -> "Custom temperature (°C, 30–60)"; Limit.MINUTES -> "Custom time (minutes, 1–1440)" }, 13f, Ui.MUTED), top = 22)
+                val min = if (kind == Limit.TEMP) 30 else 1
+                val max = when (kind) { Limit.BATTERY -> 99; Limit.TEMP -> 60; Limit.MINUTES -> 1440 }
                 val e = EditText(this)
                 e.filters = arrayOf(InputFilter { src, st, en, dest, ds, de ->
                     val next = dest.toString().substring(0, ds) + src.subSequence(st, en) + dest.toString().substring(de)
                     if (next.isEmpty()) null
                     else if (next.length > max.toString().length || (next.toIntOrNull() ?: Int.MAX_VALUE) > max) "" else null
                 })
-                e.hint = if (isBattery) "e.g. 25" else "e.g. 90"
+                e.hint = when (kind) { Limit.BATTERY -> "e.g. 25"; Limit.TEMP -> "e.g. 43"; Limit.MINUTES -> "e.g. 90" }
                 e.inputType = InputType.TYPE_CLASS_NUMBER
                 e.isSingleLine = true
                 Ui.styleInput(this, e)
@@ -1116,8 +1124,8 @@ class MainActivity : Activity() {
                 Ui.add(col, e, top = 6)
                 Ui.add(col, Ui.button(this, "Set custom value", Ui.Kind.FILLED) {
                     val v = e.text.toString().toIntOrNull()
-                    if (v == null || v < 1 || v > max) {
-                        Toast.makeText(this, if (isBattery) "Enter 1–99" else "Enter 1–1440", Toast.LENGTH_SHORT).show()
+                    if (v == null || v < min || v > max) {
+                        Toast.makeText(this, "Enter $min–$max", Toast.LENGTH_SHORT).show()
                     } else pick(v)
                 }, top = 12)
             }
@@ -1269,8 +1277,9 @@ class MainActivity : Activity() {
             ), "Applies the next time the app is launched.")
 
             section("Auto-stop", listOf(
-                settingsLimit("Stop at low battery", true, AppSettings.appBattery(this, pkg), AppSettings.autoStopBattery(this)) { AppSettings.setAppBattery(this, pkg, it) },
-                settingsLimit("Stop after running", false, AppSettings.appMinutes(this, pkg), AppSettings.autoStopMinutes(this)) { AppSettings.setAppMinutes(this, pkg, it); refreshTasks() }
+                settingsLimit("Stop at low battery", Limit.BATTERY, AppSettings.appBattery(this, pkg), AppSettings.autoStopBattery(this)) { AppSettings.setAppBattery(this, pkg, it) },
+                settingsLimit("Stop when overheating", Limit.TEMP, AppSettings.appTemp(this, pkg), AppSettings.autoStopTemp(this)) { AppSettings.setAppTemp(this, pkg, it) },
+                settingsLimit("Stop after running", Limit.MINUTES, AppSettings.appMinutes(this, pkg), AppSettings.autoStopMinutes(this)) { AppSettings.setAppMinutes(this, pkg, it); refreshTasks() }
             ))
 
             section("Viewer", listOf(
@@ -1320,9 +1329,10 @@ class MainActivity : Activity() {
                 }
             ))
             section("Auto-stop defaults", listOf(
-                settingsLimit("Stop at low battery", true, AppSettings.autoStopBattery(this), null) { AppSettings.setAutoStopBattery(this, it) },
-                settingsLimit("Stop app after running", false, AppSettings.autoStopMinutes(this), null) { AppSettings.setAutoStopMinutes(this, it); refreshTasks() }
-            ), "Used by apps with no setting of their own. Set one per app from its ⋮ menu. Stopping also removes the display. Battery stop only applies when not charging.")
+                settingsLimit("Stop at low battery", Limit.BATTERY, AppSettings.autoStopBattery(this), null) { AppSettings.setAutoStopBattery(this, it) },
+                settingsLimit("Stop when overheating", Limit.TEMP, AppSettings.autoStopTemp(this), null) { AppSettings.setAutoStopTemp(this, it) },
+                settingsLimit("Stop app after running", Limit.MINUTES, AppSettings.autoStopMinutes(this), null) { AppSettings.setAutoStopMinutes(this, it); refreshTasks() }
+            ), "Used by apps with no setting of their own. Set one per app from its ⋮ menu. Stopping closes the app and removes its display. Low battery only applies when not charging. Overheating uses the battery temperature and applies even while charging.")
             section("Behavior", listOf(
                 settingsToggle("Show memory and CPU", "On each running app. Turn off for faster refreshing.", AppSettings.showStats(this)) {
                     AppSettings.setShowStats(this, it)
