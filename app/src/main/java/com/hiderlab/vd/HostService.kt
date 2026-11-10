@@ -48,26 +48,75 @@ class HostService : Service() {
     }
 
     @Volatile private var watching = false
+    @Volatile private var lastCount = -1
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         watching = false
+        Vd.listeners.remove(changeListener)
         super.onDestroy()
     }
 
-    /** Checks the auto-stop limits from Settings every 30 seconds while a display is up. */
+    /** Keeps the notification's app count fresh (every 5 s) and checks the Settings limits (every 30 s). */
     private fun startWatchdog() {
         if (watching) return
         watching = true
         val ctx = applicationContext
         Thread {
+            var ticks = 0
             while (watching) {
-                try { Thread.sleep(30_000) } catch (_: InterruptedException) {}
+                try { Thread.sleep(5_000) } catch (_: InterruptedException) {}
                 if (!watching) break
-                try { checkLimits(ctx) } catch (t: Throwable) { Debug.write("watchdog: $t") }
+                ticks++
+                if (ticks % 6 == 0) {
+                    try { checkLimits(ctx) } catch (t: Throwable) { Debug.write("watchdog: $t") }
+                }
+                refreshNotification()
             }
         }.start()
+    }
+
+    private val changeListener = Runnable { Thread { refreshNotification() }.start() }
+
+    /** Number of distinct apps currently running on the hidden displays. */
+    private fun runningApps(): Int =
+        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct().size
+
+    private fun statusText(n: Int): String = when (n) {
+        0 -> "Hidden display is ready"
+        1 -> "1 app running in the background"
+        else -> "$n apps running in the background"
+    }
+
+    /** Rebuilds the ongoing notification when the number of running apps has changed. */
+    private fun refreshNotification() {
+        if (!watching || Vd.service == null) return
+        val n = try { runningApps() } catch (_: Throwable) { return }
+        if (n == lastCount) return
+        lastCount = n
+        try { getSystemService(NotificationManager::class.java).notify(1, buildNotification(n)) } catch (_: Throwable) {}
+    }
+
+    private fun buildNotification(count: Int): Notification {
+        val open = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val stop = PendingIntent.getService(
+            this, 1, Intent(this, HostService::class.java).setAction(ACTION_STOP_ALL),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        return Notification.Builder(this, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_pocketscreen)
+            .setContentTitle("PocketScreen")
+            .setContentText(statusText(count))
+            .setContentIntent(open)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .addAction(Notification.Action.Builder(Icon.createWithResource(this, android.R.drawable.ic_delete), "Stop all", stop).build())
+            .build()
     }
 
     private fun checkLimits(ctx: android.content.Context) {
@@ -114,28 +163,18 @@ class HostService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Hidden display", NotificationManager.IMPORTANCE_LOW))
 
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, HostService::class.java).setAction(ACTION_STOP_ALL),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val n = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("PocketScreen")
-            .setContentText("Hidden display is running")
-            .setContentIntent(open)
-            .setOngoing(true)
-            .addAction(Notification.Action.Builder(Icon.createWithResource(this, android.R.drawable.ic_delete), "Stop all", stop).build())
-            .build()
+        // No binder calls on the main thread: show a placeholder now, the background refresh fills in the count.
+        lastCount = -1
+        val n = buildNotification(0)
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(1, n)
         }
+        Vd.listeners.remove(changeListener)
+        Vd.listeners.add(changeListener)
         startWatchdog()
+        Thread { refreshNotification() }.start()
         return START_NOT_STICKY
     }
 }
