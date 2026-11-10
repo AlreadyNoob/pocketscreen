@@ -38,7 +38,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var suppressKb = false
     private var backControls = true
     private var lastBack = 0L
-    private var lastBackEvent = 0L // any back gesture, even one that is swallowed
+    // Back swipes from the screen edges are handled here, not by the system (see dispatchTouchEvent).
+    private var edgeDown = false
+    private var edgeFired = false
+    private var edgeStartX = 0f
+    private var edgeFromLeft = false
+    private var barsShown = false
     private var pkgOnDisplay: String? = null
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
@@ -128,10 +133,10 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             if (::kbIcon.isInitialized) kbIcon.tint = if (visible) Ui.ACCENT else Ui.TEXT
             if (::sv.isInitialized) updatePan()
         }, onInsets = { ins ->
-            // A back swipe can make Android flash the status bar. Hide it again right away.
-            if (Build.VERSION.SDK_INT >= 30 && android.os.SystemClock.uptimeMillis() - lastBackEvent < 1000 &&
-                (ins.isVisible(WindowInsets.Type.statusBars()) || ins.isVisible(WindowInsets.Type.navigationBars()))) {
-                ui.post { immersive() }
+            // For the debug log only: when do the system bars show up?
+            if (Build.VERSION.SDK_INT >= 30) {
+                val shown = ins.isVisible(WindowInsets.Type.statusBars()) || ins.isVisible(WindowInsets.Type.navigationBars())
+                if (shown != barsShown) { barsShown = shown; Debug.write("viewer: system bars ${if (shown) "shown" else "hidden"}") }
             }
         })
 
@@ -172,8 +177,9 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         if (suppressKb) sv.editorAllowed = false
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
-        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(); updatePan() }
-        sv.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> updateGestureExclusion(v) }
+        // The exclusion goes on the full-width box, so it covers the real screen edges even when the
+        // display is letterboxed inside it.
+        box.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> fit(); updatePan(); updateGestureExclusion(v) }
 
         sv.holder.setFixedSize(dw, dh)
         sv.holder.addCallback(this)
@@ -297,11 +303,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     /** Back never closes the viewer; it is sent to the app on the display, or ignored if turned off. */
     private fun sendBack() {
-        // Whatever happens to the back gesture, don't let it leave the system bars showing.
-        lastBackEvent = android.os.SystemClock.uptimeMillis()
-        immersive()
-        ui.postDelayed({ immersive() }, 120)
-        ui.postDelayed({ immersive() }, 400)
         if (!backControls) return
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastBack < 200) return // the same gesture can arrive through two paths
@@ -309,6 +310,36 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         try {
             Vd.service?.key(displayId, KeyEvent.KEYCODE_BACK, 0)
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Back from a swipe off the left or right screen edge. Handling it here means the system's own
+     * back gesture never starts, and with it the transient system bars it brings along.
+     */
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        if (backControls && e.pointerCount == 1) {
+            val w = resources.displayMetrics.widthPixels
+            val edge = Ui.dp(this, 28)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> if (e.rawX <= edge || e.rawX >= w - edge) {
+                    edgeDown = true
+                    edgeFired = false
+                    edgeStartX = e.rawX
+                    edgeFromLeft = e.rawX <= edge
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> if (edgeDown) {
+                    val dx = if (edgeFromLeft) e.rawX - edgeStartX else edgeStartX - e.rawX
+                    if (!edgeFired && dx > Ui.dp(this, 40)) { edgeFired = true; sendBack() }
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (edgeDown) {
+                    edgeDown = false
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(e)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -340,6 +371,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        Debug.write("viewer: window focus ${if (hasFocus) "gained" else "lost"}")
         if (hasFocus) {
             immersive()
             if (!startedHidden) {
@@ -363,8 +395,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         val w = v.width
         val h = v.height
         if (w <= 0 || h <= 0) return
-        // With back enabled the edge swipe must stay available, so don't exclude it.
-        if (backControls) { v.systemGestureExclusionRects = emptyList(); return }
+        // The system never gets the edge swipes here. With back on, dispatchTouchEvent turns them into
+        // Back itself; with back off they do nothing. Either way Android has no swipe to react to.
         val edge = Ui.dp(this, 36)
         val strip = minOf(h, Ui.dp(this, 200))
         val top = (h - strip) / 2
@@ -407,7 +439,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         suppressKb = AppSettings.effectiveSuppressKeyboard(this, pkg)
         if (::sv.isInitialized) {
             sv.editorAllowed = !suppressKb || kbVisible
-            updateGestureExclusion(sv)
+            updateGestureExclusion(box)
         }
     }
 

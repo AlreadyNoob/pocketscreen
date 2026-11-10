@@ -317,9 +317,7 @@ class MainActivity : Activity() {
             more.tint = Ui.MUTED
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
-                    Ui.MenuItem("Launch now") { launchApp(pkg, landscape) },
-                    Ui.MenuItem("Edit orientation and size") { askOrientation(Apps.App(Apps.label(this, pkg), pkg, null), landscape) },
-                    Ui.MenuItem("Keyboard and back gesture") { showAppViewerOptions(pkg) },
+                    Ui.MenuItem("App settings") { showAppSettings(pkg, landscape) },
                     Ui.MenuItem("Remove from quick launch", danger = true) { Vd.removePreset(this, pkg); renderPresets() }
                 ))
             }
@@ -478,7 +476,6 @@ class MainActivity : Activity() {
             more.tint = Ui.MUTED
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
-                    Ui.MenuItem("Open viewer") { openViewer(r.display.id) },
                     Ui.MenuItem(if (muted) "Unmute sound" else "Mute sound") {
                         bg {
                             log("${if (muted) "Unmute" else "Mute"} ${Apps.label(applicationContext, r.pkg)}:\n" +
@@ -486,8 +483,7 @@ class MainActivity : Activity() {
                             runOnUiThread { refreshTasks() }
                         }
                     },
-                    Ui.MenuItem("Auto-stop for this app") { showAppAutoStop(r.pkg) },
-                    Ui.MenuItem("Keyboard and back gesture") { showAppViewerOptions(r.pkg) },
+                    Ui.MenuItem("App settings") { showAppSettings(r.pkg, r.display.landscape) },
                     Ui.MenuItem("Close display, keep app in Recents") {
                         hidePkg(r.pkg)
                         bg {
@@ -730,13 +726,13 @@ class MainActivity : Activity() {
             return
         }
         hidingPkgs.remove(pkg)
-        Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show()
         bg {
             try {
-                // Already running on a hidden display: just open it instead of starting a second copy.
-                val existing = Vd.displayOf(pkg)
-                if (existing != null) {
-                    runOnUiThread { openViewer(existing) }
+                // Already running on a hidden display: say so and don't start anything.
+                if (Vd.displayOf(pkg) != null) {
+                    runOnUiThread {
+                        Toast.makeText(this, "${Apps.label(this, pkg)} is already running. Open it from Running now.", Toast.LENGTH_SHORT).show()
+                    }
                     return@bg
                 }
                 if (!Vd.supportsSecondaryDisplays()) {
@@ -744,6 +740,7 @@ class MainActivity : Activity() {
                     runOnUiThread { showUnsupported() }
                     return@bg
                 }
+                runOnUiThread { Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show() }
                 val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg))
                 if (id >= 0) {
                     log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
@@ -1074,19 +1071,20 @@ class MainActivity : Activity() {
         return row
     }
 
-    /** A row with an On / Off / Default choice for one app. [defaultOn] is what Default currently means. */
+    /**
+     * A per-app switch that normally follows Settings. [current] is -1 (follow Settings), 0 or 1.
+     * The list offers only two choices: follow Settings (shown with its value) or the opposite.
+     */
     private fun settingsTri(title: String, sub: String, current: Int, defaultOn: Boolean, onChange: (Int) -> Unit): View {
-        var value = current
-        fun label(v: Int) = when (v) {
-            1 -> "On"
-            0 -> "Off"
-            else -> "Default (${if (defaultOn) "On" else "Off"})"
-        }
+        val opposite = if (defaultOn) 0 else 1
+        // An explicit choice equal to the default is the same thing as following it.
+        var value = if (current == opposite) opposite else -1
+        fun label(v: Int) = if (v < 0) "Same as Settings (${if (defaultOn) "On" else "Off"})" else if (v == 1) "On" else "Off"
         val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
         pill.setPadding(dp(14), dp(7), dp(14), dp(7))
         fun style() {
-            val on = value == 1 || (value < 0 && defaultOn)
-            pill.text = label(value)
+            val on = (if (value < 0) defaultOn else value == 1)
+            pill.text = if (value < 0) (if (defaultOn) "On" else "Off") else label(value)
             pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
             pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
         }
@@ -1097,37 +1095,64 @@ class MainActivity : Activity() {
                 body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
                 Ui.add(body, Ui.text(this, sub, 14f, Ui.MUTED), top = 2)
                 fun pick(v: Int) { value = v; style(); onChange(v); dlg.dismiss() }
-                Ui.group(body, listOf(-1, 1, 0).map { v -> optionRow(label(v), value == v) { pick(v) } }, top = 16)
+                Ui.group(body, listOf(-1, opposite).map { v -> optionRow(label(v), value == v) { pick(v) } }, top = 16)
             }
         }
         return row
     }
 
-    private fun showAppViewerOptions(pkg: String) {
-        Ui.sheet(this) { body, dlg ->
+    /** Everything that is set per app, in one place. Reached from the app's ⋮ menu. */
+    private fun showAppSettings(pkg: String, landscape: Boolean) {
+        Ui.sheet(this, 0.85f) { body, dlg ->
             body.addView(Ui.text(this, Apps.label(this, pkg), 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, "Viewer options for this app only. \"Default\" uses the value from Settings. Applies next time you open the viewer.", 14f, Ui.MUTED), top = 2)
-            Ui.group(body, listOf(
+            Ui.add(body, Ui.text(this, "Settings for this app only.", 14f, Ui.MUTED), top = 2)
+            val scroll = ScrollView(this)
+            scroll.isVerticalScrollBarEnabled = false
+            val col = LinearLayout(this)
+            col.orientation = LinearLayout.VERTICAL
+            scroll.addView(col)
+            Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
+
+            fun section(title: String, rows: List<View>, note: String? = null) {
+                Ui.add(col, Ui.sectionLabel(this, title), top = 22)
+                val box = LinearLayout(this)
+                box.orientation = LinearLayout.VERTICAL
+                Ui.add(col, box, top = 8)
+                Ui.group(box, rows)
+                if (note != null) {
+                    val n = Ui.text(this, note, 12f, Ui.MUTED)
+                    n.setPadding(dp(8), 0, dp(8), 0)
+                    Ui.add(col, n, top = 8)
+                }
+            }
+
+            val sz = Vd.sizeFor(this, landscape, Vd.appCfg(this, pkg))
+            val isPreset = Vd.presetOf(this, pkg) != null
+            section("Display", listOf(
+                settingsRow(if (isPreset) "Orientation and size" else "Display size",
+                    "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} dpi") {
+                    dlg.dismiss()
+                    if (isPreset) askOrientation(Apps.App(Apps.label(this, pkg), pkg, null), landscape)
+                    else showSizeEditor(
+                        Apps.label(this, pkg), "Size for this app only. Applies the next time it launches.",
+                        Vd.appCfg(this, pkg) ?: Vd.sizeCfg(this), "Use default size",
+                        onSave = { Vd.setAppCfg(this, pkg, it) },
+                        onReset = { Vd.setAppCfg(this, pkg, null) }
+                    )
+                }
+            ), "Applies the next time the app is launched.")
+
+            section("Auto-stop", listOf(
+                settingsLimit("Stop at low battery", true, AppSettings.appBattery(this, pkg), AppSettings.autoStopBattery(this)) { AppSettings.setAppBattery(this, pkg, it) },
+                settingsLimit("Stop after running", false, AppSettings.appMinutes(this, pkg), AppSettings.autoStopMinutes(this)) { AppSettings.setAppMinutes(this, pkg, it); refreshTasks() }
+            ))
+
+            section("Viewer", listOf(
                 settingsTri("Suppress keyboard requests", "Keyboard only opens from the keyboard icon.",
                     AppSettings.appSuppressKeyboard(this, pkg), AppSettings.suppressKeyboard(this)) { AppSettings.setAppSuppressKeyboard(this, pkg, it) },
-                settingsTri("Back gesture controls the app", "On: back goes back inside the app. Off: back does nothing.",
+                settingsTri("Back gesture controls the app", "Edge swipes go back inside the app.",
                     AppSettings.appBackGesture(this, pkg), AppSettings.backGesture(this)) { AppSettings.setAppBackGesture(this, pkg, it) }
-            ), top = 16)
-            Ui.add(body, Ui.button(this, "Done", Ui.Kind.FILLED) { dlg.dismiss() }, top = 20)
-        }
-    }
-
-    private fun showAppAutoStop(pkg: String) {
-        Ui.sheet(this) { body, dlg ->
-            body.addView(Ui.text(this, Apps.label(this, pkg), 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, "Auto-stop for this app only. \"Default\" uses the value from Settings.", 14f, Ui.MUTED), top = 2)
-            val gb = AppSettings.autoStopBattery(this)
-            val gm = AppSettings.autoStopMinutes(this)
-            Ui.group(body, listOf(
-                settingsLimit("Stop at low battery", true, AppSettings.appBattery(this, pkg), gb) { AppSettings.setAppBattery(this, pkg, it) },
-                settingsLimit("Stop after running", false, AppSettings.appMinutes(this, pkg), gm) { AppSettings.setAppMinutes(this, pkg, it); refreshTasks() }
-            ), top = 16)
-            Ui.add(body, Ui.button(this, "Done", Ui.Kind.FILLED) { dlg.dismiss() }, top = 20)
+            ), "Take effect the next time you open the viewer.")
         }
     }
 
