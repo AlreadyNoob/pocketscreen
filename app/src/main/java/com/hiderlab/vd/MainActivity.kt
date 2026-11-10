@@ -336,8 +336,9 @@ class MainActivity : Activity() {
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
-            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"}, ${sz.first}×${sz.second} at ${sz.third} dpi" +
-                (if (cfg != null) ", custom settings" else ""), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
+            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"}, ${sz.first}×${sz.second} at ${sz.third} DPI", 13f, Ui.MUTED)
+                .also { it.maxLines = 2; it.ellipsize = TextUtils.TruncateAt.END })
+            if (cfg != null) col.addView(Ui.text(this, "Custom settings", 12f, Ui.ACCENT))
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -467,8 +468,12 @@ class MainActivity : Activity() {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
-        fun detail(d: Vd.Disp) = "Display ${d.id}, ${if (d.landscape) "landscape" else "portrait"}, ${d.w}×${d.h}" +
-            (if (d.dpi > 0) " at ${d.dpi} dpi" else "")
+        fun detail(d: Vd.Disp) = "${if (d.landscape) "Landscape" else "Portrait"}, ${d.w}×${d.h}" +
+            (if (d.dpi > 0) " at ${d.dpi} DPI" else "")
+        fun detailLines(d: Vd.Disp, col: LinearLayout) {
+            col.addView(Ui.text(this, detail(d), 13f, Ui.MUTED).also { it.maxLines = 2; it.ellipsize = TextUtils.TruncateAt.END })
+            col.addView(Ui.text(this, "Display ${d.id}", 12f, Ui.MUTED))
+        }
 
         val rows = ArrayList<View>()
         for (c in crashes) if (list.none { it.pkg == c.pkg }) rows.add(crashRow(c))
@@ -493,7 +498,7 @@ class MainActivity : Activity() {
             nameRow.addView(Ui.dot(this, Ui.OK, 8), liveLp)
             nameRow.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
             col.addView(nameRow)
-            col.addView(Ui.text(this, detail(r.display), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
+            detailLines(r.display, col)
             val muted = Vd.isMuted(this, r.pkg)
             val pills = LinearLayout(this)
             pills.orientation = LinearLayout.HORIZONTAL
@@ -542,7 +547,8 @@ class MainActivity : Activity() {
                     }
                 ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
             }
-            val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME)
+            val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME, 40)
+            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 20f), Ui.hair(), dp(1)), Ui.dpf(this, 20f))
             muteBtn.tint = if (muted) Ui.MUTED else Ui.ACCENT
             muteBtn.contentDescription = if (muted) "Unmute sound" else "Mute sound"
             muteBtn.setOnClickListener {
@@ -552,7 +558,7 @@ class MainActivity : Activity() {
                     runOnUiThread { refreshTasks() }
                 }
             }
-            row.addView(muteBtn)
+            row.addView(muteBtn, LinearLayout.LayoutParams(-2, -2).also { it.rightMargin = dp(4) })
             row.addView(more)
             outer.addView(row)
             if (pills.childCount > 0) {
@@ -571,7 +577,7 @@ class MainActivity : Activity() {
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
             col.addView(Ui.text(this, "Empty display", 16f, Ui.TEXT, bold = true))
-            col.addView(Ui.text(this, detail(d), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
+            detailLines(d, col)
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -720,7 +726,7 @@ class MainActivity : Activity() {
             fun sizeLabel() {
                 val c = Vd.appCfg(this, a.pkg)
                 val p = Vd.sizeFor(this, sel, c)
-                sizeRow.text = (if (c != null) "Custom size" else "Default size") + "  ·  ${p.first}×${p.second}  ·  ${p.third} dpi"
+                sizeRow.text = (if (c != null) "Custom size" else "Default size") + "  ·  ${p.first}×${p.second}  ·  ${p.third} DPI"
             }
             sizeRow.setOnClickListener {
                 val c = Vd.appCfg(this, a.pkg) ?: Vd.sizeCfg(this)
@@ -943,7 +949,7 @@ class MainActivity : Activity() {
                 val c = current()
                 val p = Vd.sizeFor(this, false, c)
                 val l = Vd.sizeFor(this, true, c)
-                preview.text = "Portrait ${p.first}×${p.second}   ·   Landscape ${l.first}×${l.second}   ·   ${p.third} dpi"
+                preview.text = "Portrait ${p.first}×${p.second}   ·   Landscape ${l.first}×${l.second}   ·   ${p.third} DPI"
             }
 
             fun styleModes() {
@@ -1260,7 +1266,7 @@ class MainActivity : Activity() {
             val isPreset = Vd.presetOf(this, pkg) != null
             section("Display", listOf(
                 settingsRow(if (isPreset) "Orientation and size" else "Display size",
-                    "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} dpi") {
+                    "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} DPI") {
                     dlg.dismiss()
                     if (isPreset) askOrientation(Apps.App(Apps.label(this, pkg), pkg, null), landscape)
                     else showSizeEditor(
@@ -1312,12 +1318,15 @@ class MainActivity : Activity() {
 
             val p = Vd.sizeFor(this, false)
             section("General", listOf(
-                settingsRow("Display size", "Portrait ${p.first}×${p.second} · ${p.third} dpi") {
+                settingsRow("Display size", "Portrait ${p.first}×${p.second} · ${p.third} DPI") {
                     dlg.dismiss(); showDisplaySettings()
                 },
                 settingsRefresh(AppSettings.refreshRate(this), null) { AppSettings.setRefreshRate(this, it) },
                 settingsRow("Restore sound", "Give sound back to all muted apps") {
-                    bg { log(Vd.restoreAllAudio(applicationContext)) }
+                    bg {
+                        log(Vd.restoreAllAudio(applicationContext))
+                        runOnUiThread { refreshTasks() }
+                    }
                     Toast.makeText(this, "Sound restored", Toast.LENGTH_SHORT).show()
                 }
             ))

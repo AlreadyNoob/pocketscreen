@@ -134,9 +134,9 @@ object Vd {
         if (isMuted(ctx, pkg)) applyAudio(pkg, false)
     }
 
-    /** Gives sound back to every app that is set to muted. The saved choices stay. */
+    /** Gives sound back to every muted app and clears the saved choice, so the mute icons show it too. */
     fun restoreAllAudio(ctx: Context): String =
-        mutedApps(ctx).joinToString("\n") { "$it: " + applyAudio(it, false).lines().lastOrNull().orEmpty() }
+        mutedApps(ctx).toList().joinToString("\n") { "$it: " + setMuted(ctx, it, false).lines().lastOrNull().orEmpty() }
             .ifEmpty { "No muted apps." }
 
     /** Re-applies the saved sound state; used shortly after launch, once the app's process exists. */
