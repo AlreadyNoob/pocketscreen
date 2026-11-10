@@ -440,6 +440,13 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     override fun onResume() {
         super.onResume()
         if (::subView.isInitialized) ui.post(poll)
+        // Coming back after a long time away: attach the surface again if it is already valid (the
+        // SurfaceView may not be recreated), and reconnect the service if the system dropped it.
+        if (::sv.isInitialized) {
+            if (Vd.service == null) Vd.connect(this)
+            val h = sv.holder
+            if (h.surface?.isValid == true) surfaceCreated(h)
+        }
     }
 
     override fun onPause() {

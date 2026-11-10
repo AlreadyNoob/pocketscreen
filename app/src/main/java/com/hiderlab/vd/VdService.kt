@@ -343,6 +343,14 @@ class VdService : IVdService.Stub() {
                     "hashCode" -> 1
                     "equals" -> false
                     "toString" -> "cb"
+                    // The system tells us when it pauses/stops a display. Keep a note, so a blank
+                    // display can be traced to the system rather than guessed at.
+                    "onPaused", "onResumed", "onStopped" -> {
+                        val note = "display callback ${m.name} (${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())})"
+                        Log.w("VdService", note)
+                        if (m.name != "onResumed") lastError = note
+                        null
+                    }
                     else -> null
                 }
             }

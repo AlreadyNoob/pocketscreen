@@ -409,8 +409,11 @@ object Vd {
             if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
-        // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off in Settings.
-        val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 else LAUNCH_FLAGS // 0x00800000 = EXCLUDE_FROM_RECENTS
+        // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off in Settings. Android only reads
+        // EXCLUDE_FROM_RECENTS when it creates or resets a task. If the app already has a leftover task
+        // (still listed in Recents from an earlier run), the flag is ignored and the entry stays.
+        // CLEAR_TASK resets that task so the flag takes effect on it too.
+        val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 or 0x00008000 else LAUNCH_FLAGS // EXCLUDE_FROM_RECENTS | CLEAR_TASK
         return exec("am start --display $display -f $flags -n $comp")
     }
 
