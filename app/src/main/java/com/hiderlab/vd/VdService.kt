@@ -40,6 +40,8 @@ class VdService : IVdService.Stub() {
         val cb: Any
     ) {
         var viewerSurface: Surface? = null
+        /** Keeps this display's power group awake; see [keepAwake]. */
+        var wakeToken: IBinder? = null
     }
 
     private val displays = ConcurrentHashMap<Int, VD>()
@@ -82,9 +84,10 @@ class VdService : IVdService.Stub() {
                 displays[vd.id] = vd
                 // Keep apps on this display from raising the keyboard on the phone's main screen.
                 hideImeOnDisplay(vd.id)
+                val wake = keepAwake(vd)
                 // Let non-resizable apps open on a secondary display.
                 run("settings put global force_resizable_activities 1")
-                return "OK:${vd.id} (flags=$flags, fps=${if (fps > 0) fps.toString() else "auto"}${if (fps > 0 && !rateApplied) " NOT APPLIED" else ""})"
+                return "OK:${vd.id} (flags=$flags, fps=${if (fps > 0) fps.toString() else "auto"}${if (fps > 0 && !rateApplied) " NOT APPLIED" else ""}, wake=$wake)"
             } catch (t: Throwable) {
                 errors.append("flags=").append(flags).append(": ")
                     .append(Log.getStackTraceString(unwrap(t)).take(900)).append('\n')
@@ -369,7 +372,60 @@ class VdService : IVdService.Stub() {
         }
     }
 
+    /**
+     * A display in its own power group goes to sleep on the phone's screen timeout, just like the
+     * main screen. Android then switches the display off: it renders black, drops input, and apps
+     * on it are stopped. Holding a screen wake lock tied to this display's id keeps only that
+     * display's group awake (it is what FLAG_KEEP_SCREEN_ON does for a window), and it is released
+     * with the display. Returns "ok", or why it could not be taken.
+     */
+    private fun keepAwake(vd: VD): String = try {
+        val binder = Class.forName("android.os.ServiceManager")
+            .getMethod("getService", String::class.java).invoke(null, "power") as IBinder
+        val pm = Class.forName("android.os.IPowerManager\$Stub")
+            .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+        val m = pm.javaClass.methods.firstOrNull { it.name == "acquireWakeLock" }
+            ?: error("acquireWakeLock not found")
+        val token = Binder()
+        // SCREEN_BRIGHT_WAKE_LOCK (0x0a) | ACQUIRE_CAUSES_WAKEUP (0x10000000), so a group that has
+        // already gone to sleep is woken as well.
+        val lockFlags = 0x0000000a or 0x10000000
+        val types = m.parameterTypes
+        val args = arrayOfNulls<Any>(types.size)
+        // Android 14+: (lock, flags, tag, packageName, ws, historyTag, displayId, callback)
+        // Android 12-13: (lock, flags, tag, packageName, ws, historyTag[, displayId])
+        var ints = 0
+        for (i in types.indices) {
+            args[i] = when {
+                types[i] == IBinder::class.java -> token
+                types[i] == Int::class.javaPrimitiveType -> if (ints++ == 0) lockFlags else vd.id
+                types[i] == String::class.java -> if (i == 2) "PocketScreen display ${vd.id}" else "com.android.shell"
+                else -> null // WorkSource, history tag, callback
+            }
+        }
+        m.invoke(pm, *args)
+        vd.wakeToken = token
+        "ok"
+    } catch (t: Throwable) {
+        val why = unwrap(t).toString().take(150)
+        Log.w("VdService", "Could not keep display ${vd.id} awake: $why")
+        "failed: $why"
+    }
+
+    private fun releaseAwake(vd: VD) {
+        val token = vd.wakeToken ?: return
+        vd.wakeToken = null
+        try {
+            val binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String::class.java).invoke(null, "power") as IBinder
+            val pm = Class.forName("android.os.IPowerManager\$Stub")
+                .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+            pm.javaClass.methods.firstOrNull { it.name == "releaseWakeLock" }?.invoke(pm, token, 0)
+        } catch (_: Throwable) {}
+    }
+
     private fun cleanup(vd: VD) {
+        releaseAwake(vd)
         try {
             Class.forName("android.hardware.display.IDisplayManager")
                 .getMethod("releaseVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"))
