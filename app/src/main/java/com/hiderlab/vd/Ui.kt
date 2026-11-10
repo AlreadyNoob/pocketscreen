@@ -575,34 +575,52 @@ class IconView(ctx: Context, private val kind: Int, private val sizeDp: Int = 48
             c.drawCircle(cx, cy, r, p)
             c.drawCircle(cx, cy + gap, r, p)
         } else if (kind == SETTINGS) {
-            val s = minOf(width, height) * 0.2f
-            c.drawCircle(cx, cy, s * 0.62f, p)
-            for (i in 0 until 8) {
-                val a = Math.toRadians(i * 45.0)
-                val ca = Math.cos(a).toFloat()
-                val sa = Math.sin(a).toFloat()
-                c.drawLine(cx + ca * s * 1.2f, cy + sa * s * 1.2f, cx + ca * s * 1.75f, cy + sa * s * 1.75f, p)
+            // Gear: 8 rounded teeth around a ring, with a round hole. 24-unit grid, centred.
+            val u = minOf(width, height) / 48f * 1.1f
+            val rOut = 10f * u
+            val rValley = 7.7f * u
+            val gear = Path()
+            val toothHalf = 9.0
+            val baseHalf = 13.0
+            val valley = RectF(cx - rValley, cy - rValley, cx + rValley, cy + rValley)
+            val crest = RectF(cx - rOut, cy - rOut, cx + rOut, cy + rOut)
+            gear.moveTo(
+                cx + rValley * Math.cos(Math.toRadians(-45.0 + baseHalf)).toFloat(),
+                cy + rValley * Math.sin(Math.toRadians(-45.0 + baseHalf)).toFloat()
+            )
+            for (k in 0 until 8) {
+                val a = 45.0 * k
+                gear.arcTo(valley, (a - 45.0 + baseHalf).toFloat(), (45.0 - 2 * baseHalf).toFloat())
+                gear.lineTo(
+                    cx + rOut * Math.cos(Math.toRadians(a - toothHalf)).toFloat(),
+                    cy + rOut * Math.sin(Math.toRadians(a - toothHalf)).toFloat()
+                )
+                gear.arcTo(crest, (a - toothHalf).toFloat(), (2 * toothHalf).toFloat())
             }
-            c.drawCircle(cx, cy, s * 1.2f, p)
+            gear.close()
+            c.drawPath(gear, p)
+            c.drawCircle(cx, cy, 3.2f * u, p)
         } else if (kind == VOLUME || kind == MUTED) {
-            val s = minOf(width, height) * 0.19f
-            val ox = cx - s * 0.7f
+            // Speaker + waves (or X). Same footprint for both so the icon never jumps when toggled.
+            val u = minOf(width, height) / 48f * 1.1f
+            fun gx(x: Float) = cx + (x - 12f) * u
+            fun gy(y: Float) = cy + (y - 12f) * u
             val body = Path()
-            body.moveTo(ox - 1.1f * s, cy - 0.55f * s)
-            body.lineTo(ox - 0.3f * s, cy - 0.55f * s)
-            body.lineTo(ox + 0.6f * s, cy - 1.25f * s)
-            body.lineTo(ox + 0.6f * s, cy + 1.25f * s)
-            body.lineTo(ox - 0.3f * s, cy + 0.55f * s)
-            body.lineTo(ox - 1.1f * s, cy + 0.55f * s)
+            body.moveTo(gx(11f), gy(5f))
+            body.lineTo(gx(6.5f), gy(9f))
+            body.lineTo(gx(3f), gy(9f))
+            body.lineTo(gx(3f), gy(15f))
+            body.lineTo(gx(6.5f), gy(15f))
+            body.lineTo(gx(11f), gy(19f))
             body.close()
             c.drawPath(body, p)
             if (kind == VOLUME) {
-                for (r in floatArrayOf(0.9f * s, 1.7f * s)) {
-                    c.drawArc(RectF(ox + 0.6f * s - r, cy - r, ox + 0.6f * s + r, cy + r), -48f, 96f, false, p)
+                for (r in floatArrayOf(4.6f, 8.6f)) {
+                    c.drawArc(RectF(gx(11f - r), gy(12f - r), gx(11f + r), gy(12f + r)), -45f, 90f, false, p)
                 }
             } else {
-                c.drawLine(ox + 1.3f * s, cy - 0.7f * s, ox + 2.5f * s, cy + 0.7f * s, p)
-                c.drawLine(ox + 1.3f * s, cy + 0.7f * s, ox + 2.5f * s, cy - 0.7f * s, p)
+                c.drawLine(gx(14.8f), gy(8.8f), gx(21f), gy(15.2f), p)
+                c.drawLine(gx(14.8f), gy(15.2f), gx(21f), gy(8.8f), p)
             }
         } else {
             val s = minOf(width, height) * 0.2f
