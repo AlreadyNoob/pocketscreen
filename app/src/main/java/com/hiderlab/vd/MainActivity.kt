@@ -649,6 +649,14 @@ class MainActivity : Activity() {
                 Thread.sleep(600)
                 runOnUiThread { refresh() }
                 Thread.sleep(900)
+                // Some phones accept the launch but open the app on the main screen instead.
+                if (Vd.tasks(id).none { it.second == pkg }) {
+                    log(Vd.diagnose(pkg, id))
+                    runOnUiThread {
+                        Toast.makeText(this, "This phone didn't open ${Apps.label(this, pkg)} on the hidden display. " +
+                            "It may not support apps on secondary displays. Turn on Debug log and share it.", Toast.LENGTH_LONG).show()
+                    }
+                }
                 // Once the process exists, set its sound state again.
                 Vd.syncAudio(applicationContext, pkg)
                 runOnUiThread { refresh() }

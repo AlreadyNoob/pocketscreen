@@ -386,6 +386,35 @@ object Vd {
         return exec("am start --display $display -f $flags -n $comp")
     }
 
+    /** Which display a package's task is on, according to the system, or null if no task is found. */
+    fun displayOfTask(pkg: String): Int? {
+        val out = exec("dumpsys activity activities | grep -E 'Display #|mDisplayId=|Task\\{|ActivityRecord\\{' | grep -E 'Display #|$pkg'")
+        var current: Int? = null
+        for (line in out.lines()) {
+            Regex("Display #(\\d+)").find(line)?.let { current = it.groupValues[1].toInt() }
+            if (line.contains(pkg) && current != null) return current
+        }
+        return null
+    }
+
+    /** Facts about this phone that decide whether apps can run on a hidden display. For the debug log. */
+    fun diagnose(pkg: String, display: Int): String {
+        fun sh(c: String) = exec(c).trim().lines().take(12).joinToString("\n")
+        return buildString {
+            appendLine("--- Why did $pkg not start on display $display? ---")
+            appendLine("model: " + sh("getprop ro.product.model") + ", android " + sh("getprop ro.build.version.release") + " (sdk " + sh("getprop ro.build.version.sdk") + ")")
+            appendLine("low_ram: " + sh("getprop ro.config.low_ram"))
+            appendLine("secondary-display feature: " + sh("cmd package has-feature android.software.activities_on_secondary_displays"))
+            appendLine("freeform feature: " + sh("cmd package has-feature android.software.freeform_window_management"))
+            appendLine("picture-in-picture feature: " + sh("cmd package has-feature android.software.picture_in_picture"))
+            appendLine("force_resizable: " + sh("settings get global force_resizable_activities"))
+            appendLine("freeform setting: " + sh("settings get global enable_freeform_support"))
+            appendLine("non-resizable multi-window: " + sh("settings get global enable_non_resizable_multi_window"))
+            appendLine("task display: " + displayOfTask(pkg))
+            appendLine("display $display: " + sh("dumpsys display | grep -E \"mDisplayId=$display\\b\" -A0 | head -3"))
+        }
+    }
+
     private fun stopHostIfIdle(ctx: Context) {
         if (displays.isEmpty()) {
             try { ctx.applicationContext.stopService(Intent(ctx.applicationContext, HostService::class.java)) } catch (_: Throwable) {}
