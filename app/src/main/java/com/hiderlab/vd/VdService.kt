@@ -80,6 +80,8 @@ class VdService : IVdService.Stub() {
             try {
                 val vd = create(w, h, dpi, fps, flags)
                 displays[vd.id] = vd
+                // Keep apps on this display from raising the keyboard on the phone's main screen.
+                hideImeOnDisplay(vd.id)
                 // Let non-resizable apps open on a secondary display.
                 run("settings put global force_resizable_activities 1")
                 return "OK:${vd.id} (flags=$flags, fps=${if (fps > 0) fps.toString() else "auto"}${if (fps > 0 && !rateApplied) " NOT APPLIED" else ""})"
@@ -89,6 +91,32 @@ class VdService : IVdService.Stub() {
             }
         }
         return "ERR:\n$errors"
+    }
+
+    /**
+     * A trusted virtual display has no keyboard of its own, so Android falls back to showing the
+     * keyboard of any app on it (Termux, a browser...) on the phone's main screen. Setting the
+     * display's IME policy to "hide" stops that. The viewer is unaffected: it types through its
+     * own window and sends the keys into the display.
+     */
+    private fun hideImeOnDisplay(id: Int) {
+        try {
+            val binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String::class.java).invoke(null, "window") as IBinder
+            val wm = Class.forName("android.view.IWindowManager\$Stub")
+                .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+            val intT = Int::class.javaPrimitiveType
+            val m = wm.javaClass.methods.firstOrNull { it.name == "setDisplayImePolicy" && it.parameterCount == 2 }
+            if (m != null) {
+                m.invoke(wm, id, 2) // DISPLAY_IME_POLICY_HIDE
+            } else {
+                // Android 10: the same switch is a boolean.
+                wm.javaClass.getMethod("setShouldShowIme", intT, Boolean::class.javaPrimitiveType).invoke(wm, id, false)
+            }
+        } catch (t: Throwable) {
+            lastError = "ime policy: " + unwrap(t).toString().take(150)
+            Log.w("VdService", "Could not hide the keyboard on display $id: $t")
+        }
     }
 
     override fun releaseDisplay(id: Int): String {

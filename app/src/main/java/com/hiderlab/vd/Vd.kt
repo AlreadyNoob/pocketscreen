@@ -163,18 +163,6 @@ object Vd {
         return r
     }
 
-    /**
-     * Removes the app's hidden display (if nothing else is on it) and leaves the app alone: it is
-     * not launched anywhere and not stopped, it just stays in Recents.
-     */
-    fun detachApp(ctx: Context, pkg: String, displayId: Int): String {
-        restoreAudio(ctx, pkg)
-        clearSession(ctx, pkg)
-        val others = tasks(displayId).any { it.second != pkg }
-        if (!others) releaseOnly(ctx, displayId)
-        return if (others) "Display kept: other apps are on it." else "Display $displayId removed."
-    }
-
     // ---- memory and CPU ----
 
     data class Stat(val memMb: Int?, val cpu: Double?)

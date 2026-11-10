@@ -3,7 +3,6 @@ package com.hiderlab.vd
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
-import android.content.res.Resources
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
@@ -56,17 +55,6 @@ object Ui {
     private var DANGER_FG = 0
     private var themeKey = ""
 
-    // Shape tokens (dp). One place to tune how square or round the whole app feels.
-    const val R_CARD = 16
-    const val R_GROUP_OUTER = 16
-    const val R_GROUP_INNER = 4
-    const val R_BTN = 14
-    const val R_FIELD = 12
-    const val R_SHEET = 24
-    const val R_PILL = 8
-    const val R_CHIP = 10
-    const val R_FAB = 18
-
     init { setPalette(true, false, null) }
 
     enum class Kind { FILLED, TONAL, TEXT, DANGER, DANGER_TEXT }
@@ -97,17 +85,17 @@ object Ui {
     private fun setPalette(night: Boolean, dynamic: Boolean, ctx: Context?) {
         DARK = night
         if (night) {
-            BG = Color.parseColor("#0C0D12"); SURFACE = Color.parseColor("#14161D"); SURFACE2 = Color.parseColor("#1E212B")
-            OUTLINE = Color.parseColor("#2B2F3B"); TEXT = Color.parseColor("#ECEEF5"); MUTED = Color.parseColor("#9096A8")
-            ACCENT = Color.parseColor("#9EA7FF"); ON_ACCENT = Color.parseColor("#12154A")
-            ACCENT_CONT = Color.parseColor("#2A2F6B"); ON_ACCENT_CONT = Color.parseColor("#DDE0FF")
-            OK = Color.parseColor("#4ADE9A"); WARN = Color.parseColor("#F5B84A"); BAD = Color.parseColor("#FF7A7A")
-            DANGER_BG = Color.parseColor("#3A1C22"); DANGER_FG = Color.parseColor("#FFB4B0")
+            BG = Color.parseColor("#0A0C0F"); SURFACE = Color.parseColor("#12161B"); SURFACE2 = Color.parseColor("#1B2128")
+            OUTLINE = Color.parseColor("#29313A"); TEXT = Color.parseColor("#EEF2F6"); MUTED = Color.parseColor("#8E99A6")
+            ACCENT = Color.parseColor("#5EE6C8"); ON_ACCENT = Color.parseColor("#00251D")
+            ACCENT_CONT = Color.parseColor("#14403A"); ON_ACCENT_CONT = Color.parseColor("#BDF7EA")
+            OK = Color.parseColor("#3DD68C"); WARN = Color.parseColor("#F2B84B"); BAD = Color.parseColor("#FF6B6B")
+            DANGER_BG = Color.parseColor("#3B1B1F"); DANGER_FG = Color.parseColor("#FFB3B0")
         } else {
-            BG = Color.parseColor("#F4F5FA"); SURFACE = Color.parseColor("#FFFFFF"); SURFACE2 = Color.parseColor("#E9EBF4")
-            OUTLINE = Color.parseColor("#D8DBE8"); TEXT = Color.parseColor("#14161F"); MUTED = Color.parseColor("#5A6074")
-            ACCENT = Color.parseColor("#4650E0"); ON_ACCENT = Color.parseColor("#FFFFFF")
-            ACCENT_CONT = Color.parseColor("#E0E2FF"); ON_ACCENT_CONT = Color.parseColor("#0E1250")
+            BG = Color.parseColor("#F5F6F8"); SURFACE = Color.parseColor("#FFFFFF"); SURFACE2 = Color.parseColor("#ECEFF3")
+            OUTLINE = Color.parseColor("#DDE2E8"); TEXT = Color.parseColor("#12171C"); MUTED = Color.parseColor("#596370")
+            ACCENT = Color.parseColor("#0B7D6A"); ON_ACCENT = Color.parseColor("#FFFFFF")
+            ACCENT_CONT = Color.parseColor("#D3F2EA"); ON_ACCENT_CONT = Color.parseColor("#04382F")
             OK = Color.parseColor("#15803D"); WARN = Color.parseColor("#B45309"); BAD = Color.parseColor("#C62828")
             DANGER_BG = Color.parseColor("#FCE4E2"); DANGER_FG = Color.parseColor("#B3261E")
         }
@@ -179,11 +167,10 @@ object Ui {
         return RippleDrawable(ColorStateList.valueOf(rippleColor()), base, mask)
     }
 
-    /** Ripple for icon buttons: a rounded square (R_FIELD) to match the squarer design, not a circle. */
     fun rippleCircle(): Drawable {
         val mask = GradientDrawable()
+        mask.setShape(GradientDrawable.OVAL)
         mask.setColor(Color.WHITE)
-        mask.setCornerRadius(R_FIELD * Resources.getSystem().displayMetrics.density)
         return RippleDrawable(ColorStateList.valueOf(rippleColor()), null, mask)
     }
 
@@ -202,7 +189,7 @@ object Ui {
     /** Hairline used on cards and groups so surfaces read as crisp layers on dark backgrounds. */
     fun hair(): Int = (OUTLINE and 0x00FFFFFF) or 0xB0000000.toInt()
 
-    fun surface(ctx: Context, radius: Int = R_CARD, clickable: Boolean = false): Drawable {
+    fun surface(ctx: Context, radius: Int = 20, clickable: Boolean = false): Drawable {
         val r = dpf(ctx, radius.toFloat())
         val base = shape(SURFACE, r, hair(), dp(ctx, 1))
         return if (clickable) withRipple(base, r) else base
@@ -214,8 +201,8 @@ object Ui {
      */
     fun group(parent: LinearLayout, rows: List<View>, top: Int = 0) {
         val ctx = parent.context
-        val big = dpf(ctx, R_GROUP_OUTER.toFloat())
-        val small = dpf(ctx, R_GROUP_INNER.toFloat())
+        val big = dpf(ctx, 20f)
+        val small = dpf(ctx, 6f)
         for ((i, v) in rows.withIndex()) {
             val t = if (i == 0) big else small
             val b = if (i == rows.size - 1) big else small
@@ -229,15 +216,15 @@ object Ui {
                 pressable(v, 0.985f)
             } else v.background = base
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.topMargin = dp(ctx, if (i == 0) top else 2)
+            lp.topMargin = dp(ctx, if (i == 0) top else 3)
             parent.addView(v, lp)
         }
     }
 
     /** Small accent-colored heading above a group. */
     fun sectionLabel(ctx: Context, title: String): TextView {
-        val t = text(ctx, title, 13f, MUTED, bold = true)
-        t.letterSpacing = 0.02f
+        val t = text(ctx, title.uppercase(), 11.5f, MUTED, bold = true)
+        t.letterSpacing = 0.1f
         t.setPadding(dp(ctx, 6), 0, dp(ctx, 6), 0)
         return t
     }
@@ -245,8 +232,8 @@ object Ui {
     /** Small rounded label, for counts and per-app facts. */
     fun pill(ctx: Context, label: String, fg: Int = MUTED, bg: Int = SURFACE2, sp: Float = 12f): TextView {
         val t = text(ctx, label, sp, fg, bold = true)
-        t.setPadding(dp(ctx, 8), dp(ctx, 3), dp(ctx, 8), dp(ctx, 3))
-        t.background = shape(bg, dpf(ctx, R_PILL.toFloat()))
+        t.setPadding(dp(ctx, 10), dp(ctx, 4), dp(ctx, 10), dp(ctx, 4))
+        t.background = shape(bg, dpf(ctx, 12f))
         t.fontFeatureSettings = "tnum"
         return t
     }
@@ -269,8 +256,7 @@ object Ui {
         t.textSize = sp
         t.setTextColor(color)
         if (bold) t.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        if (sp >= 20f) t.letterSpacing = -0.02f // large titles sit tighter
-        if (bold && sp >= 24f) t.typeface = Typeface.create("sans-serif", Typeface.BOLD) // headline weight
+        if (sp >= 20f) t.letterSpacing = -0.015f // large titles sit tighter
         return t
     }
 
@@ -280,7 +266,7 @@ object Ui {
         e.setHintTextColor(MUTED)
         e.textSize = 16f
         e.setPadding(dp(ctx, 18), dp(ctx, 14), dp(ctx, 18), dp(ctx, 14))
-        val r = dpf(ctx, R_FIELD.toFloat())
+        val r = dpf(ctx, 14f)
         val sl = StateListDrawable()
         sl.addState(intArrayOf(android.R.attr.state_focused), shape(SURFACE2, r, ACCENT, dp(ctx, 2)))
         sl.addState(intArrayOf(), shape(SURFACE2, r, hair(), dp(ctx, 1)))
@@ -310,12 +296,12 @@ object Ui {
         t.letterSpacing = 0.01f
         t.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         t.gravity = Gravity.CENTER
-        t.minHeight = dp(ctx, 48)
+        t.minHeight = dp(ctx, 52)
         t.setPadding(dp(ctx, 22), 0, dp(ctx, 22), 0)
         val outlined = kind == Kind.TONAL
         t.background = withRipple(
-            if (outlined) shape(bg, dpf(ctx, R_BTN.toFloat()), hair(), dp(ctx, 1)) else shape(bg, dpf(ctx, R_BTN.toFloat())),
-            dpf(ctx, R_BTN.toFloat())
+            if (outlined) shape(bg, dpf(ctx, 26f), hair(), dp(ctx, 1)) else shape(bg, dpf(ctx, 26f)),
+            dpf(ctx, 26f)
         )
         t.isClickable = true
         t.isFocusable = true
@@ -337,7 +323,7 @@ object Ui {
         c.orientation = LinearLayout.HORIZONTAL
         c.gravity = Gravity.CENTER_VERTICAL
         c.setPadding(dp(ctx, 12), dp(ctx, 7), dp(ctx, 14), dp(ctx, 7))
-        c.background = shape(SURFACE, dpf(ctx, R_CHIP.toFloat()), hair(), dp(ctx, 1))
+        c.background = shape(SURFACE, dpf(ctx, 18f), hair(), dp(ctx, 1))
         val d = View(ctx)
         val g = GradientDrawable()
         g.setShape(GradientDrawable.OVAL)
@@ -350,50 +336,25 @@ object Ui {
         return c
     }
 
-    /** One connected status strip: a dot and label per item with thin dividers, instead of loose chips. */
-    fun statusStrip(ctx: Context, items: List<Pair<String, Int>>): LinearLayout {
-        val row = LinearLayout(ctx)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        row.background = surface(ctx, R_CHIP + 2)
-        for ((i, item) in items.withIndex()) {
-            if (i > 0) {
-                val d = View(ctx)
-                d.setBackgroundColor(hair())
-                row.addView(d, LinearLayout.LayoutParams(dp(ctx, 1), dp(ctx, 16)))
-            }
-            val seg = LinearLayout(ctx)
-            seg.orientation = LinearLayout.HORIZONTAL
-            seg.gravity = Gravity.CENTER
-            seg.setPadding(dp(ctx, 8), dp(ctx, 12), dp(ctx, 8), dp(ctx, 12))
-            val dlp = LinearLayout.LayoutParams(dp(ctx, 8), dp(ctx, 8))
-            dlp.rightMargin = dp(ctx, 7)
-            seg.addView(dot(ctx, item.second, 8), dlp)
-            seg.addView(text(ctx, item.first, 12.5f, TEXT, bold = true))
-            row.addView(seg, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        return row
-    }
-
-    /** Primary action bar: centered icon + label, filled accent, soft shadow. Stretches to the width it is given. */
+    /** Extended floating action button: icon + label, pill shaped, with a shadow. */
     fun fab(ctx: Context, label: String, onClick: () -> Unit): LinearLayout {
         val f = LinearLayout(ctx)
         f.orientation = LinearLayout.HORIZONTAL
-        f.gravity = Gravity.CENTER
-        f.setPadding(dp(ctx, 20), 0, dp(ctx, 20), 0)
-        f.minimumHeight = dp(ctx, 56)
-        val r = dpf(ctx, R_FAB.toFloat())
+        f.gravity = Gravity.CENTER_VERTICAL
+        f.setPadding(dp(ctx, 20), 0, dp(ctx, 24), 0)
+        f.minimumHeight = dp(ctx, 60)
+        val r = dpf(ctx, 30f)
         f.background = withRipple(shape(ACCENT, r), r)
         f.isClickable = true
         f.isFocusable = true
-        f.elevation = dpf(ctx, 6f)
+        f.elevation = dpf(ctx, 8f)
         if (Build.VERSION.SDK_INT >= 28) {
-            f.outlineAmbientShadowColor = Color.BLACK
-            f.outlineSpotShadowColor = Color.BLACK
+            f.outlineAmbientShadowColor = ACCENT
+            f.outlineSpotShadowColor = ACCENT
         }
         f.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, dpf(ctx, R_FAB.toFloat()))
+                outline.setRoundRect(0, 0, view.width, view.height, view.height / 2f)
             }
         }
         val ic = IconView(ctx, IconView.PLUS, 24, false)
@@ -401,7 +362,7 @@ object Ui {
         f.addView(ic, LinearLayout.LayoutParams(dp(ctx, 24), dp(ctx, 24)))
         val t = text(ctx, label, 16f, ON_ACCENT, bold = true)
         val tl = LinearLayout.LayoutParams(-2, -2)
-        tl.leftMargin = dp(ctx, 10)
+        tl.leftMargin = dp(ctx, 12)
         f.addView(t, tl)
         f.setOnClickListener { onClick() }
         pressable(f)
@@ -453,11 +414,11 @@ object Ui {
     fun menu(a: Activity, anchor: View, items: List<MenuItem>) {
         val box = LinearLayout(a)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(a, 6), dp(a, 6), dp(a, 6), dp(a, 6))
-        box.background = shape(SURFACE2, dpf(a, R_CARD.toFloat()), hair(), dp(a, 1))
+        box.setPadding(0, dp(a, 8), 0, dp(a, 8))
+        box.background = shape(SURFACE2, dpf(a, 18f), hair(), dp(a, 1))
         box.clipToOutline = true
         box.elevation = dpf(a, 12f)
-        val pw = PopupWindow(box, dp(a, 248), ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        val pw = PopupWindow(box, dp(a, 264), ViewGroup.LayoutParams.WRAP_CONTENT, true)
         pw.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         pw.isOutsideTouchable = true
         for (item in items) {
@@ -465,16 +426,15 @@ object Ui {
             val t = TextView(a)
             t.text = item.label
             t.gravity = Gravity.CENTER_VERTICAL
-            t.minHeight = dp(a, 48)
-            t.setPadding(dp(a, 14), dp(a, 8), dp(a, 14), dp(a, 8))
+            t.minHeight = dp(a, 52)
+            t.setPadding(dp(a, 20), dp(a, 8), dp(a, 20), dp(a, 8))
             if (act == null) {
                 t.textSize = 12f
                 t.setTextColor(MUTED)
-                t.minHeight = dp(a, 36)
             } else {
-                t.textSize = 15f
+                t.textSize = 15.5f
                 t.setTextColor(if (item.danger) DANGER_FG else TEXT)
-                t.background = withRipple(null, dpf(a, R_FIELD.toFloat() - 2f))
+                t.background = withRipple(null, 0f)
                 t.isClickable = true
                 t.isFocusable = true
                 t.setOnClickListener { pw.dismiss(); act() }
@@ -487,26 +447,11 @@ object Ui {
         box.animate().alpha(1f).translationY(0f).setDuration(160).setInterpolator(DecelerateInterpolator()).start()
     }
 
-    /** Title block for bottom sheets: 24sp headline with an optional 13sp muted subtitle. */
-    fun sheetTitle(ctx: Context, title: String, sub: String? = null): LinearLayout {
-        val box = LinearLayout(ctx)
-        box.orientation = LinearLayout.VERTICAL
-        box.addView(text(ctx, title, 24f, TEXT, bold = true))
-        if (sub != null) {
-            val s = text(ctx, sub, 13f, MUTED)
-            s.setLineSpacing(0f, 1.15f)
-            val lp = LinearLayout.LayoutParams(-1, -2)
-            lp.topMargin = dp(ctx, 4)
-            box.addView(s, lp)
-        }
-        return box
-    }
-
     /** A bottom sheet. [heightFrac] of 0 wraps the content; otherwise it is a fraction of the screen height. */
     fun sheet(a: Activity, heightFrac: Float = 0f, build: (LinearLayout, Dialog) -> Unit): Dialog {
         val d = Dialog(a)
         d.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val r = dpf(a, R_SHEET.toFloat())
+        val r = dpf(a, 28f)
         val body = LinearLayout(a)
         body.orientation = LinearLayout.VERTICAL
         val g = GradientDrawable()
@@ -514,11 +459,11 @@ object Ui {
         g.setCornerRadii(floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f))
         g.setStroke(dp(a, 1), hair())
         body.background = g
-        body.setPadding(dp(a, 24), dp(a, 12), dp(a, 24), dp(a, 28))
+        body.setPadding(dp(a, 22), dp(a, 12), dp(a, 22), dp(a, 28))
 
         val handle = View(a)
         handle.background = shape(OUTLINE, dpf(a, 3f))
-        val hp = LinearLayout.LayoutParams(dp(a, 40), dp(a, 4))
+        val hp = LinearLayout.LayoutParams(dp(a, 36), dp(a, 4))
         hp.gravity = Gravity.CENTER_HORIZONTAL
         hp.bottomMargin = dp(a, 16)
         body.addView(handle, hp)
@@ -533,7 +478,7 @@ object Ui {
             else ViewGroup.LayoutParams.WRAP_CONTENT
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h)
             w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            w.setDimAmount(0.55f)
+            w.setDimAmount(0.62f)
         }
         // Slide up into place.
         body.translationY = dpf(a, 480f)
@@ -555,7 +500,6 @@ class IconView(ctx: Context, private val kind: Int, private val sizeDp: Int = 48
         const val SETTINGS = 6
         const val VOLUME = 7
         const val MUTED = 8
-        const val PLAY = 9
     }
 
     var tint: Int = Ui.TEXT
@@ -630,18 +574,6 @@ class IconView(ctx: Context, private val kind: Int, private val sizeDp: Int = 48
             c.drawCircle(cx, cy - gap, r, p)
             c.drawCircle(cx, cy, r, p)
             c.drawCircle(cx, cy + gap, r, p)
-        } else if (kind == PLAY) {
-            // Filled triangle with softly rounded corners, nudged right so it looks centred.
-            val s = minOf(width, height) * 0.2f
-            p.style = Paint.Style.FILL_AND_STROKE
-            p.strokeJoin = Paint.Join.ROUND
-            p.strokeWidth = s * 0.35f
-            val path = Path()
-            path.moveTo(cx - s * 0.7f + s * 0.15f, cy - s * 1.1f)
-            path.lineTo(cx + s * 1.1f + s * 0.15f, cy)
-            path.lineTo(cx - s * 0.7f + s * 0.15f, cy + s * 1.1f)
-            path.close()
-            c.drawPath(path, p)
         } else if (kind == SETTINGS) {
             // Gear: 8 rounded teeth around a ring, with a round hole. 24-unit grid, centred.
             val u = minOf(width, height) / 48f * 1.1f
@@ -754,7 +686,7 @@ class SwitchView(ctx: Context) : View(ctx) {
     }
 
     override fun onMeasure(wSpec: Int, hSpec: Int) {
-        setMeasuredDimension(Ui.dp(context, 48), Ui.dp(context, 28))
+        setMeasuredDimension(Ui.dp(context, 50), Ui.dp(context, 30))
     }
 
     override fun onDraw(c: Canvas) {
@@ -764,23 +696,22 @@ class SwitchView(ctx: Context) : View(ctx) {
         // track
         p.style = Paint.Style.FILL
         p.color = argb.evaluate(progress, Ui.SURFACE2, Ui.ACCENT) as Int
-        val tr = h * 0.36f
-        c.drawRoundRect(RectF(0f, 0f, w, h), tr, tr, p)
+        c.drawRoundRect(RectF(0f, 0f, w, h), h / 2, h / 2, p)
         if (progress < 1f) {
             p.style = Paint.Style.STROKE
             p.strokeWidth = sw
             p.color = (Ui.MUTED and 0x00FFFFFF) or (((1f - progress) * 255).toInt() shl 24)
-            c.drawRoundRect(RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), tr, tr, p)
+            c.drawRoundRect(RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), h / 2, h / 2, p)
         }
         // thumb
-        val rOff = Ui.dpf(context, 6.5f)
-        val rOn = Ui.dpf(context, 10f)
+        val rOff = Ui.dpf(context, 7f)
+        val rOn = Ui.dpf(context, 11f)
         val r = rOff + (rOn - rOff) * progress
         val pad = h / 2
         val cx = pad + (w - 2 * pad) * progress
         p.style = Paint.Style.FILL
         p.color = argb.evaluate(progress, Ui.MUTED, Ui.ON_ACCENT) as Int
-        c.drawRoundRect(RectF(cx - r, h / 2 - r, cx + r, h / 2 + r), r * 0.62f, r * 0.62f, p)
+        c.drawCircle(cx, h / 2, r, p)
     }
 }
 

@@ -7,18 +7,18 @@
     <!-- phone outline -->
     <path
         android:pathData="M43,27 H65 A6,6 0 0 1 71,33 V75 A6,6 0 0 1 65,81 H43 A6,6 0 0 1 37,75 V33 A6,6 0 0 1 43,27 Z"
-        android:strokeColor="#9EA7FF"
+        android:strokeColor="#5EE6C8"
         android:strokeWidth="4"
         android:fillColor="#00000000" />
     <!-- the hidden display inside -->
     <path
         android:pathData="M46,38 H62 A3,3 0 0 1 65,41 V67 A3,3 0 0 1 62,70 H46 A3,3 0 0 1 43,67 V41 A3,3 0 0 1 46,38 Z"
-        android:fillColor="#9EA7FF"
+        android:fillColor="#5EE6C8"
         android:fillAlpha="0.4" />
     <!-- speaker pill -->
     <path
         android:pathData="M50,32.5 H58"
-        android:strokeColor="#9EA7FF"
+        android:strokeColor="#5EE6C8"
         android:strokeWidth="2"
         android:strokeLineCap="round" />
 </vector>

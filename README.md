@@ -23,7 +23,7 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 1. Tap **Launch app**, pick an app, choose **Portrait** or **Landscape**, and confirm. A hidden display is created and the app starts on it.
 2. The app appears under **Running now** with its display, size, how long it has been running and, if a time limit applies, how long is left.
 3. Tap a running app to open the **viewer**: it mirrors the display and sends your touches and keys to the app. The keyboard icon in the viewer opens the on-screen keyboard.
-4. Use the app's **⋮** menu for the rest: mute, auto-stop, close the display, stop the app.
+4. Use the app's **⋮** menu for the rest: mute, auto-stop, stop the app.
 
 ### Features
 
@@ -33,7 +33,6 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 - **Refresh rate:** Auto (the phone's own rate), 30/60/90/120/144 Hz or any custom value, per app with a default in Settings. Needs Android 14+; Android rounds it to a rate the screen can show, so it can't exceed the phone's own maximum. Applies at launch.
 - **Mute per app** (the app is unmuted on every launch; mute it again from its menu).
 - **Auto-stop** per app, with defaults in Settings: stop at a battery level (when not charging) and/or after running for a set time. Presets or any custom value. Stopping an app also removes its display.
-- **Close display, keep app:** removes the app's display without stopping the app. See the Recents note below.
 - **Stats:** approximate memory (PSS) and CPU share per app. CPU is an average over the last few minutes, as a share of the whole CPU.
 - **Cleanup:** displays with nothing on them are removed automatically after about 30 seconds.
 - **Viewer options:** the back gesture can control the app or be ignored, and the keyboard can be kept from popping up unless you ask for it.
@@ -42,7 +41,7 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 
 ### Recents
 
-By default apps are launched with the "exclude from Recents" flag so hidden apps do not clutter Recents. A task keeps that flag, so an app launched this way may also stay out of Recents after **Close display**. Turn off **Hide apps from Recents** in Settings if you would rather see them there.
+By default apps are launched with the "exclude from Recents" flag so hidden apps do not clutter Recents. Turn off **Hide apps from Recents** in Settings if you would rather see them there.
 
 ## How it works
 
