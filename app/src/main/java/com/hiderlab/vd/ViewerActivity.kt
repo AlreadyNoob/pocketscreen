@@ -197,30 +197,35 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     // ---- touch ----
 
     private fun onDisplayTouch(v: View, e: MotionEvent): Boolean {
-        val action = when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> MotionEvent.ACTION_DOWN
-            MotionEvent.ACTION_MOVE -> MotionEvent.ACTION_MOVE
-            MotionEvent.ACTION_UP -> MotionEvent.ACTION_UP
-            MotionEvent.ACTION_CANCEL -> MotionEvent.ACTION_CANCEL
+        val masked = e.actionMasked
+        val action = when (masked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL,
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> masked
             else -> return true
         }
-        val bx = (e.x * dw / v.width).coerceIn(0f, (dw - 1).toFloat())
-        val by = (e.y * dh / v.height).coerceIn(0f, (dh - 1).toFloat())
-        // buffer coordinates -> the display's rotated (logical) coordinates
-        val x: Float
-        val y: Float
-        when (rot) {
-            1 -> { x = by; y = dw - 1 - bx }
-            3 -> { x = dh - 1 - by; y = bx }
-            2 -> { x = dw - 1 - bx; y = dh - 1 - by }
-            else -> { x = bx; y = by }
+        // Every finger goes to the display, so multi-touch works.
+        val n = e.pointerCount
+        val ids = IntArray(n)
+        val xs = FloatArray(n)
+        val ys = FloatArray(n)
+        for (i in 0 until n) {
+            ids[i] = e.getPointerId(i)
+            val bx = (e.getX(i) * dw / v.width).coerceIn(0f, (dw - 1).toFloat())
+            val by = (e.getY(i) * dh / v.height).coerceIn(0f, (dh - 1).toFloat())
+            // buffer coordinates -> the display's rotated (logical) coordinates
+            when (rot) {
+                1 -> { xs[i] = by; ys[i] = dw - 1 - bx }
+                3 -> { xs[i] = dh - 1 - by; ys[i] = bx }
+                2 -> { xs[i] = dw - 1 - bx; ys[i] = dh - 1 - by }
+                else -> { xs[i] = bx; ys[i] = by }
+            }
         }
         touches++
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
             lastTapFrac = (e.y / v.height).coerceIn(0f, 1f)
             if (kbVisible) updatePan()
         }
-        try { Vd.service?.touch(displayId, action, x, y) } catch (_: Throwable) {}
+        try { Vd.service?.touchPointers(displayId, action, e.actionIndex, ids, xs, ys) } catch (_: Throwable) {}
         return true
     }
 
@@ -476,10 +481,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     override fun surfaceCreated(holder: SurfaceHolder) {
         // Without this the phone's screen can drop to a lower rate while it shows the viewer, which
         // would hide the display's higher refresh rate.
-        val hz = Vd.display(displayId)?.fps ?: 0
-        if (Build.VERSION.SDK_INT >= 30) {
-            try { holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT) } catch (_: Throwable) {}
-        }
+        requestPanelRate(holder)
         try {
             val r = Vd.service?.setSurface(displayId, holder.surface)
             if (r != null && r != "OK") {
@@ -487,6 +489,46 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
                 Toast.makeText(this, "Viewer failed, see log on main screen", Toast.LENGTH_LONG).show()
             }
         } catch (t: Throwable) { Vd.log("setSurface: $t") }
+    }
+
+    /**
+     * The hidden display is paced by the phone's own screen, so it can only run as fast as the
+     * screen does. While the viewer is open, ask the screen for the display's rate: a frame-rate
+     * vote on the viewer's surface, plus the matching screen mode for the window.
+     */
+    private fun requestPanelRate(holder: SurfaceHolder) {
+        val hz = Vd.display(displayId)?.fps ?: 0
+        if (hz <= 0) return
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                    android.view.Surface.CHANGE_FRAME_RATE_ALWAYS)
+            } else if (Build.VERSION.SDK_INT >= 30) {
+                holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+            }
+        } catch (t: Throwable) { Debug.write("viewer: setFrameRate failed: $t") }
+        try {
+            @Suppress("DEPRECATION")
+            val disp = if (Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay
+            if (disp != null) {
+                val cur = disp.mode
+                val same = disp.supportedModes.filter {
+                    it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight
+                }
+                // The slowest mode that reaches the wanted rate, or the fastest there is.
+                val best = same.filter { it.refreshRate >= hz - 0.5f }.minByOrNull { it.refreshRate }
+                    ?: same.maxByOrNull { it.refreshRate }
+                if (best != null) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = best.modeId
+                    lp.preferredRefreshRate = best.refreshRate
+                    window.attributes = lp
+                    Debug.write("viewer: display wants $hz Hz, asked the screen for ${best.refreshRate} Hz (mode ${best.modeId}); modes: " +
+                        same.joinToString { "${it.refreshRate}" })
+                }
+                ui.postDelayed({ Debug.write("viewer: screen now runs at ${disp.refreshRate} Hz") }, 1500)
+            }
+        } catch (t: Throwable) { Debug.write("viewer: screen mode request failed: $t") }
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}

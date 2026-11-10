@@ -140,6 +140,25 @@ class VdService : IVdService.Stub() {
         ev.recycle()
     }
 
+    override fun touchPointers(id: Int, action: Int, actionIndex: Int, pointerIds: IntArray, xs: FloatArray, ys: FloatArray) {
+        val n = pointerIds.size
+        if (n == 0 || xs.size < n || ys.size < n) return
+        val now = SystemClock.uptimeMillis()
+        if (action == MotionEvent.ACTION_DOWN) touchDownTime = now
+        val props = Array(n) { i ->
+            MotionEvent.PointerProperties().also { it.id = pointerIds[i]; it.toolType = MotionEvent.TOOL_TYPE_FINGER }
+        }
+        val coords = Array(n) { i ->
+            MotionEvent.PointerCoords().also { it.x = xs[i]; it.y = ys[i]; it.pressure = 1f; it.size = 1f }
+        }
+        val act = if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP)
+            action or (actionIndex shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) else action
+        val ev = MotionEvent.obtain(touchDownTime, now, act, n, props, coords, 0, 0, 1f, 1f, 0, 0,
+            InputDevice.SOURCE_TOUCHSCREEN, 0)
+        inject(ev, id)
+        ev.recycle()
+    }
+
     override fun key(id: Int, keyCode: Int, meta: Int) {
         val now = SystemClock.uptimeMillis()
         for (a in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {

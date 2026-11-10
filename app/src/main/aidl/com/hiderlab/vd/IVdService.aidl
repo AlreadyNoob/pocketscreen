@@ -21,4 +21,6 @@ interface IVdService {
     oneway void keyEvent(int id, int action, int keyCode, int meta) = 12;
     // types text as key events (keeps shift/caps), for the on-screen keyboard
     oneway void typeText(int id, String text) = 13;
+    // all fingers at once: action is the MotionEvent action, actionIndex the pointer it applies to
+    oneway void touchPointers(int id, int action, int actionIndex, in int[] pointerIds, in float[] xs, in float[] ys) = 14;
 }

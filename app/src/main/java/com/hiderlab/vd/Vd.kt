@@ -347,6 +347,8 @@ object Vd {
         if (r.startsWith("OK:")) {
             id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
             refreshInfo()
+            if (fps > 0) log("display #$id refresh as Android reports it:\n" +
+                exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
             try {
                 ctx.applicationContext.startForegroundService(Intent(ctx.applicationContext, HostService::class.java))
             } catch (t: Throwable) { log("Notification service not started: $t") }
