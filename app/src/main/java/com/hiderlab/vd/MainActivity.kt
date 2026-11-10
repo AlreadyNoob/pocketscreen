@@ -92,13 +92,18 @@ class MainActivity : Activity() {
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
+        val logo = LogoView(this, 48)
+        val logoLp = LinearLayout.LayoutParams(-2, -2)
+        logoLp.rightMargin = dp(14)
+        head.addView(logo, logoLp)
         val titles = LinearLayout(this)
         titles.orientation = LinearLayout.VERTICAL
-        titles.addView(Ui.text(this, "PocketScreen", 32f, Ui.TEXT, bold = true))
-        titles.addView(Ui.text(this, "Apps running on hidden displays", 14f, Ui.MUTED))
+        titles.addView(Ui.text(this, "PocketScreen", 28f, Ui.TEXT, bold = true))
+        titles.addView(Ui.text(this, "Apps on hidden displays", 14f, Ui.MUTED))
         head.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
         moreBtn = IconView(this, IconView.MORE)
-        moreBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 24f)), Ui.dpf(this, 24f))
+        moreBtn.contentDescription = "More options"
+        moreBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 24f), Ui.hair(), dp(1)), Ui.dpf(this, 24f))
         moreBtn.setOnClickListener { showMainMenu() }
         head.addView(moreBtn, LinearLayout.LayoutParams(-2, -2))
         Ui.add(root, head, top = 8)
@@ -117,6 +122,14 @@ class MainActivity : Activity() {
         Ui.add(setupCard, btnConnect, top = 14)
         Ui.add(root, setupCard, top = 20)
 
+        // list fades out under the floating button
+        val fade = View(this)
+        fade.background = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+            intArrayOf(Ui.BG, (Ui.BG and 0x00FFFFFF))
+        )
+        frame.addView(fade, FrameLayout.LayoutParams(-1, dp(120), Gravity.BOTTOM))
+
         // launch: extended floating action button
         btnLaunch = Ui.fab(this, "Launch app") { pickApp() }
         val fl = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
@@ -133,7 +146,8 @@ class MainActivity : Activity() {
         Ui.add(root, presetsBox, top = 8)
 
         // running apps and the displays they use, in one list
-        addSection(root, "Running now", null)
+        runningCount = Ui.pill(this, "0", Ui.MUTED, Ui.SURFACE2, 11f)
+        addSection(root, "Running now", runningCount)
         tasksBox = LinearLayout(this)
         tasksBox.orientation = LinearLayout.VERTICAL
         Ui.add(root, tasksBox, top = 8)
@@ -160,7 +174,12 @@ class MainActivity : Activity() {
         ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
 
         refresh()
+        val intro = ArrayList<View>()
+        for (i in 0 until root.childCount) intro.add(root.getChildAt(i))
+        Ui.reveal(intro)
     }
+
+    private lateinit var runningCount: TextView
 
     private fun addSection(parent: LinearLayout, title: String, trailing: View?) {
         val row = LinearLayout(this)
@@ -168,7 +187,7 @@ class MainActivity : Activity() {
         row.gravity = Gravity.CENTER_VERTICAL
         row.addView(Ui.sectionLabel(this, title), LinearLayout.LayoutParams(0, -2, 1f))
         if (trailing != null) row.addView(trailing)
-        Ui.add(parent, row, top = 28)
+        Ui.add(parent, row, top = 30)
     }
 
     override fun onResume() {
@@ -252,7 +271,9 @@ class MainActivity : Activity() {
 
     private fun emptyNote(text: String): View {
         val t = Ui.text(this, text, 14f, Ui.MUTED)
-        t.setPadding(dp(20), dp(18), dp(20), dp(18))
+        t.gravity = Gravity.CENTER
+        t.setLineSpacing(0f, 1.15f)
+        t.setPadding(dp(28), dp(32), dp(28), dp(32))
         t.background = Ui.surface(this)
         return t
     }
@@ -276,7 +297,8 @@ class MainActivity : Activity() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(dp(16), dp(14), dp(6), dp(14))
+        row.minimumHeight = dp(76)
+        row.setPadding(dp(16), dp(14), dp(4), dp(14))
         return row
     }
 
@@ -308,7 +330,7 @@ class MainActivity : Activity() {
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
             col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} dpi" +
-                (if (cfg != null) " · custom" else ""), 13f, Ui.MUTED))
+                (if (cfg != null) " · custom" else ""), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -386,7 +408,8 @@ class MainActivity : Activity() {
     }
 
     private fun relaunch(c: Vd.Crash) {
-        Vd.clearCrash(this, c.pkg)
+        Vd.clearCrash(this, c.pkg) // also removes the notification
+        lastCrashes = lastCrashes.filter { it.pkg != c.pkg }
         launchApp(c.pkg, c.landscape)
         rerender()
     }
@@ -403,15 +426,15 @@ class MainActivity : Activity() {
         col.addView(name)
         val mins = ((System.currentTimeMillis() - c.whenMs) / 60000L).coerceAtLeast(0)
         col.addView(Ui.text(this, "Closed unexpectedly · " + (if (mins < 1) "just now" else "${Vd.fmtMinutes(mins)} ago"), 13f, Ui.BAD))
-        val why = Ui.text(this, c.reason, 12f, Ui.MUTED)
-        col.addView(why)
+        if (c.reason.isNotBlank()) col.addView(Ui.text(this, c.reason, 12f, Ui.MUTED))
+        val btn = Ui.text(this, "Relaunch", 13f, Ui.ON_ACCENT_CONT, bold = true)
+        btn.setPadding(dp(14), dp(7), dp(14), dp(7))
+        btn.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 18f))
+        btn.setOnClickListener { relaunch(c) }
+        Ui.add(col, btn, top = 8, w = ViewGroup.LayoutParams.WRAP_CONTENT)
         val cp = LinearLayout.LayoutParams(0, -2, 1f)
         cp.leftMargin = dp(14)
         row.addView(col, cp)
-        val btn = Ui.text(this, "Relaunch", 13f, Ui.ON_ACCENT_CONT, bold = true)
-        btn.setPadding(dp(14), dp(8), dp(14), dp(8))
-        btn.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 18f))
-        row.addView(btn)
         val more = IconView(this, IconView.MORE)
         more.tint = Ui.MUTED
         more.setOnClickListener {
@@ -431,12 +454,13 @@ class MainActivity : Activity() {
         val list = allRows.filter { it.pkg !in hidingPkgs && it.display.id !in hidingDisplays }
         val disp = allDisp.filter { it.id !in hidingDisplays }
         tasksBox.removeAllViews()
+        runningCount.text = list.map { it.pkg }.distinct().size.toString()
         val empty = disp.filter { d -> allRows.none { it.display.id == d.id } }
         if (list.isEmpty() && empty.isEmpty() && crashes.isEmpty()) {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
-        fun detail(d: Vd.Disp) = "Display #${d.id} · ${if (d.landscape) "Landscape" else "Portrait"} · ${d.w}×${d.h}" +
+        fun detail(d: Vd.Disp) = "#${d.id} · ${if (d.landscape) "Landscape" else "Portrait"} · ${d.w}×${d.h}" +
             (if (d.dpi > 0) " · ${d.dpi} dpi" else "")
 
         val rows = ArrayList<View>()
@@ -451,8 +475,16 @@ class MainActivity : Activity() {
             val name = Ui.text(this, Apps.label(this, r.pkg), 16f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
-            col.addView(name)
-            col.addView(Ui.text(this, detail(r.display), 13f, Ui.MUTED))
+            val nameRow = LinearLayout(this)
+            nameRow.orientation = LinearLayout.HORIZONTAL
+            nameRow.gravity = Gravity.CENTER_VERTICAL
+            nameRow.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+            val liveLp = LinearLayout.LayoutParams(dp(7), dp(7))
+            liveLp.leftMargin = dp(8)
+            liveLp.rightMargin = dp(10)
+            nameRow.addView(Ui.dot(this, Ui.OK, 7), liveLp)
+            col.addView(nameRow)
+            col.addView(Ui.text(this, detail(r.display), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
             val muted = Vd.isMuted(this, r.pkg)
             val extra = listOfNotNull(
                 Vd.sessionText(this, r.pkg)?.let { "Running $it" },
@@ -462,10 +494,8 @@ class MainActivity : Activity() {
                 if (muted) "Muted" else null
             ).joinToString(" · ")
             if (extra.isNotEmpty()) {
-                val st = Ui.text(this, extra, 12f, Ui.ON_ACCENT_CONT)
-                st.setPadding(dp(10), dp(3), dp(10), dp(3))
-                st.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 10f))
-                Ui.add(col, st, top = 6, w = ViewGroup.LayoutParams.WRAP_CONTENT)
+                val st = Ui.pill(this, extra, Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT, 11.5f)
+                Ui.add(col, st, top = 8, w = ViewGroup.LayoutParams.WRAP_CONTENT)
             }
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
@@ -512,7 +542,7 @@ class MainActivity : Activity() {
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
             col.addView(Ui.text(this, "Empty display", 16f, Ui.TEXT, bold = true))
-            col.addView(Ui.text(this, detail(d), 13f, Ui.MUTED))
+            col.addView(Ui.text(this, detail(d), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -631,11 +661,11 @@ class MainActivity : Activity() {
                     t.background = Ui.withRipple(
                         Ui.shape(
                             if (picked) Ui.ACCENT_CONT else Ui.SURFACE2,
-                            Ui.dpf(this, 24f),
-                            Ui.ACCENT,
-                            if (picked) dp(2) else 0
+                            Ui.dpf(this, 20f),
+                            if (picked) Ui.ACCENT else Ui.hair(),
+                            if (picked) dp(2) else dp(1)
                         ),
-                        Ui.dpf(this, 24f)
+                        Ui.dpf(this, 20f)
                     )
                     t.isClickable = true
                     t.isFocusable = true
@@ -661,7 +691,7 @@ class MainActivity : Activity() {
             fun sizeLabel() {
                 val c = Vd.appCfg(this, a.pkg)
                 val p = Vd.sizeFor(this, sel, c)
-                sizeRow.text = (if (c != null) "Custom size" else "Default size") + "  ·  ${p.first}×${p.second}  ·  ${p.third} dpi   ›"
+                sizeRow.text = (if (c != null) "Custom size" else "Default size") + "  ·  ${p.first}×${p.second}  ·  ${p.third} dpi"
             }
             sizeRow.setOnClickListener {
                 val c = Vd.appCfg(this, a.pkg) ?: Vd.sizeCfg(this)
@@ -873,7 +903,10 @@ class MainActivity : Activity() {
                 for ((b, f, v) in chipRefs) {
                     val on = f.text.toString() == v.toString()
                     b.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.TEXT)
-                    b.background = Ui.withRipple(Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 26f)), Ui.dpf(this, 26f))
+                    b.background = Ui.withRipple(
+                        Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 26f), if (on) Ui.ACCENT else Ui.hair(), dp(1)),
+                        Ui.dpf(this, 26f)
+                    )
                 }
                 val err = valid()
                 if (err != null) { preview.setTextColor(Ui.BAD); preview.text = err; return }
@@ -941,7 +974,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.minimumHeight = dp(68)
+        row.minimumHeight = dp(70)
         row.setPadding(dp(20), dp(12), dp(16), dp(12))
         row.isClickable = true
         row.isFocusable = true
@@ -959,7 +992,8 @@ class MainActivity : Activity() {
     }
 
     private fun settingsRow(title: String, sub: String, onClick: () -> Unit): View {
-        val chev = Ui.text(this, "›", 24f, Ui.MUTED)
+        val chev = IconView(this, IconView.CHEVRON, 24, false)
+        chev.tint = Ui.MUTED
         val row = settingRowBase(title, sub, chev)
         row.setOnClickListener { onClick() }
         return row
@@ -1015,7 +1049,7 @@ class MainActivity : Activity() {
         current: Int, defaultValue: Int?, onChange: (Int) -> Unit
     ): View {
         var value = current
-        val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
+        val pill = Ui.pill(this, "", Ui.TEXT, Ui.SURFACE2, 13f)
         pill.setPadding(dp(14), dp(7), dp(14), dp(7))
         fun style() {
             val on = value > 0 || (value < 0 && (defaultValue ?: 0) > 0)

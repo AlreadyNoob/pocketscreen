@@ -158,10 +158,11 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
         val titles = LinearLayout(this)
         titles.orientation = LinearLayout.VERTICAL
-        titleView = Ui.text(this, "Display #$displayId", 15f, Ui.TEXT, bold = true)
+        titleView = Ui.text(this, "Display #$displayId", 16f, Ui.TEXT, bold = true)
         titleView.isSingleLine = true
         titleView.ellipsize = TextUtils.TruncateAt.END
-        subView = Ui.text(this, "", 11f, Ui.MUTED)
+        subView = Ui.text(this, "", 11.5f, Ui.MUTED)
+        subView.fontFeatureSettings = "tnum"
         subView.isSingleLine = true
         subView.ellipsize = TextUtils.TruncateAt.END
         titles.addView(titleView)
@@ -173,6 +174,10 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         kbIcon.setOnClickListener { toggleKeyboard() }
         bar.addView(kbIcon, LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)))
         root.addView(bar, LinearLayout.LayoutParams(-1, Ui.dp(this, 48)))
+        // hairline between the bar and the display
+        val rule = View(this)
+        rule.setBackgroundColor(Ui.hair())
+        root.addView(rule, LinearLayout.LayoutParams(-1, 1))
 
         // ---- the display itself ----
         box = FrameLayout(this)

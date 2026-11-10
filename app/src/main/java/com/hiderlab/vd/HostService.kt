@@ -22,6 +22,10 @@ class HostService : Service() {
         private const val CHANNEL = "hidden_display"
         private const val ALERT_CHANNEL = "app_alerts"
 
+        fun cancelCrash(ctx: android.content.Context, pkg: String) {
+            try { ctx.getSystemService(NotificationManager::class.java).cancel(pkg.hashCode()) } catch (_: Throwable) {}
+        }
+
         /** Tells the user an app closed unexpectedly. Silently skipped if notifications are not allowed. */
         fun notifyCrash(ctx: android.content.Context, c: Vd.Crash) {
             try {
@@ -34,7 +38,7 @@ class HostService : Service() {
                 val n = Notification.Builder(ctx, ALERT_CHANNEL)
                     .setSmallIcon(android.R.drawable.stat_notify_error)
                     .setContentTitle("${Apps.label(ctx, c.pkg)} closed unexpectedly")
-                    .setContentText("${c.reason}. Open PocketScreen to relaunch it.")
+                    .setContentText("Tap to open PocketScreen and relaunch it.")
                     .setContentIntent(open)
                     .setAutoCancel(true)
                     .build()

@@ -442,7 +442,10 @@ object Vd {
         Crash(pkg, t, p.getOrNull(2).orEmpty(), p.getOrNull(1) == "1")
     }.sortedByDescending { it.whenMs }
 
-    fun clearCrash(ctx: Context, pkg: String) { crashPrefs(ctx).edit().remove(pkg).apply() }
+    fun clearCrash(ctx: Context, pkg: String) {
+        crashPrefs(ctx).edit().remove(pkg).apply()
+        HostService.cancelCrash(ctx, pkg) // the notification goes away with the entry
+    }
 
     /** Why the system says [pkg]'s last process ended, e.g. "CRASH" or "EXIT_SELF". Null if it can't be read. */
     private fun lastExitReason(pkg: String): String? {
@@ -461,9 +464,21 @@ object Vd {
         if (service == null) return emptyList()
         val found = ArrayList<Crash>()
         val now = System.currentTimeMillis()
+        // An app that is running again (for example opened from the app drawer) is no longer "closed".
+        for (c in crashes(ctx)) {
+            val p = exec("pidof ${c.pkg}").trim()
+            if (p.firstOrNull()?.isDigit() == true) clearCrash(ctx, c.pkg)
+        }
+        val onMain = tasks(0).map { it.second }.toSet()
         for ((pkg, v) in sessionPrefs(ctx).all) {
             val started = v as? Long ?: continue
             if (pkg in onDisplays || pkg in busy || now - started < 10_000L) continue
+            if (pkg in onMain) { // the user moved it to the main screen: a hand-off, not a crash
+                clearSession(ctx, pkg)
+                restoreAudio(ctx, pkg)
+                clearCrash(ctx, pkg)
+                continue
+            }
             val pid = exec("pidof $pkg").trim()
             if (pid.startsWith("ERR") ) continue
             if (pid.isNotEmpty() && pid.firstOrNull()?.isDigit() == true) continue // still alive, just not on a display
