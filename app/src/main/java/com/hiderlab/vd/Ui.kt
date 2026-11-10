@@ -343,7 +343,8 @@ object Ui {
     }
 
     /** Pads [v] by the system bars / cutout (and optionally the keyboard) so content is never covered. */
-    fun applyInsets(v: View, ime: Boolean = false, onIme: ((visible: Boolean, height: Int) -> Unit)? = null) {
+    fun applyInsets(v: View, ime: Boolean = false, onIme: ((visible: Boolean, height: Int) -> Unit)? = null,
+                    onInsets: ((WindowInsets) -> Unit)? = null) {
         v.setOnApplyWindowInsetsListener { view, ins ->
             if (Build.VERSION.SDK_INT >= 30) {
                 var types = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
@@ -357,6 +358,7 @@ object Ui {
                     ins.systemWindowInsetRight, ins.systemWindowInsetBottom
                 )
             }
+            onInsets?.invoke(ins)
             ins
         }
     }

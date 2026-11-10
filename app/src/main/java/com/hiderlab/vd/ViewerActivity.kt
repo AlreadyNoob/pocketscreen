@@ -38,6 +38,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var suppressKb = false
     private var backControls = true
     private var lastBack = 0L
+    private var lastBackEvent = 0L // any back gesture, even one that is swallowed
+    private var pkgOnDisplay: String? = null
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
     private lateinit var subView: TextView
@@ -117,7 +119,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.BLACK)
         // The keyboard overlays the display instead of resizing it; the display is panned instead.
-        Ui.applyInsets(root, ime = false) { visible, height ->
+        Ui.applyInsets(root, ime = false, onIme = { visible, height ->
             val wasVisible = kbVisible
             kbVisible = visible
             imeHeight = height
@@ -125,7 +127,13 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             if (wasVisible && !visible && ::sv.isInitialized && suppressKb) setEditor(false)
             if (::kbIcon.isInitialized) kbIcon.tint = if (visible) Ui.ACCENT else Ui.TEXT
             if (::sv.isInitialized) updatePan()
-        }
+        }, onInsets = { ins ->
+            // A back swipe can make Android flash the status bar. Hide it again right away.
+            if (Build.VERSION.SDK_INT >= 30 && android.os.SystemClock.uptimeMillis() - lastBackEvent < 1000 &&
+                (ins.isVisible(WindowInsets.Type.statusBars()) || ins.isVisible(WindowInsets.Type.navigationBars()))) {
+                ui.post { immersive() }
+            }
+        })
 
         // ---- top bar: back arrow, title, keyboard toggle ----
         val bar = LinearLayout(this)
@@ -289,6 +297,11 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     /** Back never closes the viewer; it is sent to the app on the display, or ignored if turned off. */
     private fun sendBack() {
+        // Whatever happens to the back gesture, don't let it leave the system bars showing.
+        lastBackEvent = android.os.SystemClock.uptimeMillis()
+        immersive()
+        ui.postDelayed({ immersive() }, 120)
+        ui.postDelayed({ immersive() }, 400)
         if (!backControls) return
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastBack < 200) return // the same gesture can arrive through two paths
@@ -381,8 +394,21 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
                     packageManager.getApplicationLabel(packageManager.getApplicationInfo(p.second, 0)).toString()
                 } catch (_: Throwable) { p.second }
             }.distinct()
+            val pkg = Vd.tasks(id).firstOrNull()?.second
             if (names.isNotEmpty()) ui.post { titleView.text = names.joinToString(", ") }
+            // Keyboard and back-gesture choices can be set per app.
+            if (pkg != null) ui.post { applyPerApp(pkg) }
         }.start()
+    }
+
+    private fun applyPerApp(pkg: String) {
+        pkgOnDisplay = pkg
+        backControls = AppSettings.effectiveBackGesture(this, pkg)
+        suppressKb = AppSettings.effectiveSuppressKeyboard(this, pkg)
+        if (::sv.isInitialized) {
+            sv.editorAllowed = !suppressKb || kbVisible
+            updateGestureExclusion(sv)
+        }
     }
 
     private fun fit() {

@@ -319,6 +319,7 @@ class MainActivity : Activity() {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("Launch now") { launchApp(pkg, landscape) },
                     Ui.MenuItem("Edit orientation and size") { askOrientation(Apps.App(Apps.label(this, pkg), pkg, null), landscape) },
+                    Ui.MenuItem("Keyboard and back gesture") { showAppViewerOptions(pkg) },
                     Ui.MenuItem("Remove from quick launch", danger = true) { Vd.removePreset(this, pkg); renderPresets() }
                 ))
             }
@@ -332,15 +333,33 @@ class MainActivity : Activity() {
 
     private val emptySince = HashMap<Int, Long>()
 
+    // Rows the user just removed stay hidden for a few seconds, until the system catches up.
+    private val hidingPkgs = HashMap<String, Long>()
+    private val hidingDisplays = HashMap<Int, Long>()
+    private val launching: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    @Volatile private var statsCache: Map<String, Vd.Stat> = emptyMap()
+    private var lastRows: List<Row> = emptyList()
+    private var lastDisp: List<Vd.Disp> = emptyList()
+    private var lastCrashes: List<Vd.Crash> = emptyList()
+
+    private fun hidePkg(pkg: String) { hidingPkgs[pkg] = System.currentTimeMillis(); rerender() }
+    private fun hideDisplay(id: Int) { hidingDisplays[id] = System.currentTimeMillis(); rerender() }
+    private fun rerender() = renderTasks(lastRows, lastDisp, statsCache, lastCrashes)
+
     private fun refreshTasks() {
         val disp = Vd.displays
-        if (disp.isEmpty() || Vd.service == null) {
-            tasksBox.removeAllViews()
-            tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
+        if (Vd.service == null) {
+            lastRows = emptyList(); lastDisp = emptyList(); lastCrashes = Vd.crashes(this)
+            rerender()
             return
         }
         bg {
             val rows = disp.flatMap { d -> Vd.tasks(d.id).map { Row(d, it.first, it.second) } }
+            // Note apps that died on their own, and tell the user.
+            for (c in Vd.checkCrashes(applicationContext, rows.map { it.pkg }.toSet(), launching.toSet())) {
+                HostService.notifyCrash(applicationContext, c)
+            }
+            val crashes = Vd.crashes(applicationContext)
             // Auto-clean displays that have had nothing on them for a while.
             val now = System.currentTimeMillis()
             var cleaned = false
@@ -354,15 +373,68 @@ class MainActivity : Activity() {
                     cleaned = true
                 }
             }
-            val stats = if (AppSettings.showStats(applicationContext)) Vd.appStats(rows.map { it.pkg }.distinct()) else emptyMap()
-            runOnUiThread { renderTasks(rows, disp, stats); if (cleaned) refresh() }
+            // Show the rows right away with the last known numbers; the slow memory/CPU readout follows.
+            runOnUiThread {
+                lastRows = rows; lastDisp = disp; lastCrashes = crashes
+                rerender()
+                if (cleaned) refresh()
+            }
+            if (AppSettings.showStats(applicationContext) && rows.isNotEmpty()) {
+                val stats = Vd.appStats(rows.map { it.pkg }.distinct())
+                statsCache = stats
+                runOnUiThread { rerender() }
+            }
         }
     }
 
-    private fun renderTasks(list: List<Row>, disp: List<Vd.Disp>, stats: Map<String, Vd.Stat>) {
+    private fun relaunch(c: Vd.Crash) {
+        Vd.clearCrash(this, c.pkg)
+        launchApp(c.pkg, c.landscape)
+        rerender()
+    }
+
+    private fun crashRow(c: Vd.Crash): View {
+        val row = listRow()
+        row.setOnClickListener { relaunch(c) }
+        row.addView(appIcon(c.pkg), LinearLayout.LayoutParams(dp(46), dp(46)))
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        val name = Ui.text(this, Apps.label(this, c.pkg), 16f, Ui.TEXT, bold = true)
+        name.isSingleLine = true
+        name.ellipsize = TextUtils.TruncateAt.END
+        col.addView(name)
+        val mins = ((System.currentTimeMillis() - c.whenMs) / 60000L).coerceAtLeast(0)
+        col.addView(Ui.text(this, "Closed unexpectedly · " + (if (mins < 1) "just now" else "${Vd.fmtMinutes(mins)} ago"), 13f, Ui.BAD))
+        val why = Ui.text(this, c.reason, 12f, Ui.MUTED)
+        col.addView(why)
+        val cp = LinearLayout.LayoutParams(0, -2, 1f)
+        cp.leftMargin = dp(14)
+        row.addView(col, cp)
+        val btn = Ui.text(this, "Relaunch", 13f, Ui.ON_ACCENT_CONT, bold = true)
+        btn.setPadding(dp(14), dp(8), dp(14), dp(8))
+        btn.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 18f))
+        row.addView(btn)
+        val more = IconView(this, IconView.MORE)
+        more.tint = Ui.MUTED
+        more.setOnClickListener {
+            Ui.menu(this, more, listOf(
+                Ui.MenuItem("Relaunch") { relaunch(c) },
+                Ui.MenuItem("Dismiss") { Vd.clearCrash(this, c.pkg); lastCrashes = Vd.crashes(this); rerender() }
+            ))
+        }
+        row.addView(more)
+        return row
+    }
+
+    private fun renderTasks(allRows: List<Row>, allDisp: List<Vd.Disp>, stats: Map<String, Vd.Stat>, crashes: List<Vd.Crash>) {
+        val now = System.currentTimeMillis()
+        hidingPkgs.entries.removeAll { now - it.value > 5000L }
+        hidingDisplays.entries.removeAll { now - it.value > 5000L }
+        val list = allRows.filter { it.pkg !in hidingPkgs && it.display.id !in hidingDisplays }
+        val disp = allDisp.filter { it.id !in hidingDisplays }
         tasksBox.removeAllViews()
-        val empty = disp.filter { d -> list.none { it.display.id == d.id } }
-        if (list.isEmpty() && empty.isEmpty()) {
+        val empty = disp.filter { d -> allRows.none { it.display.id == d.id } }
+        if (list.isEmpty() && empty.isEmpty() && crashes.isEmpty()) {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
@@ -370,6 +442,7 @@ class MainActivity : Activity() {
             (if (d.dpi > 0) " · ${d.dpi} dpi" else "")
 
         val rows = ArrayList<View>()
+        for (c in crashes) if (list.none { it.pkg == c.pkg }) rows.add(crashRow(c))
         for (r in list) {
             val row = listRow()
             row.setOnClickListener { openViewer(r.display.id) }
@@ -414,13 +487,16 @@ class MainActivity : Activity() {
                         }
                     },
                     Ui.MenuItem("Auto-stop for this app") { showAppAutoStop(r.pkg) },
+                    Ui.MenuItem("Keyboard and back gesture") { showAppViewerOptions(r.pkg) },
                     Ui.MenuItem("Close display, keep app in Recents") {
+                        hidePkg(r.pkg)
                         bg {
                             log("Detach ${r.pkg}:\n" + Vd.detachApp(applicationContext, r.pkg, r.display.id))
                             runOnUiThread { refresh() }
                         }
                     },
                     Ui.MenuItem("Stop app and remove display", danger = true) {
+                        hidePkg(r.pkg)
                         bg {
                             log(Vd.stopAppAndDisplay(applicationContext, r.pkg))
                             runOnUiThread { refresh() }
@@ -449,7 +525,10 @@ class MainActivity : Activity() {
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("Open viewer") { openViewer(d.id) },
-                    Ui.MenuItem("Destroy display", danger = true) { bg { Vd.destroyDisplay(applicationContext, d.id) } }
+                    Ui.MenuItem("Destroy display", danger = true) {
+                        hideDisplay(d.id)
+                        bg { Vd.destroyDisplay(applicationContext, d.id) }
+                    }
                 ))
             }
             row.addView(more)
@@ -645,37 +724,47 @@ class MainActivity : Activity() {
     }
 
     private fun launchApp(pkg: String, landscape: Boolean) {
+        // A second tap while the first launch is still starting must not start another copy.
+        if (!launching.add(pkg)) {
+            Toast.makeText(this, "${Apps.label(this, pkg)} is already launching", Toast.LENGTH_SHORT).show()
+            return
+        }
+        hidingPkgs.remove(pkg)
         Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show()
         bg {
-            // Already running on a hidden display: just open it instead of starting a second copy.
-            val existing = Vd.displayOf(pkg)
-            if (existing != null) {
-                runOnUiThread { openViewer(existing) }
-                return@bg
-            }
-            if (!Vd.supportsSecondaryDisplays()) {
-                log("Blocked launch of $pkg: this phone reports no support for apps on secondary displays.")
-                runOnUiThread { showUnsupported() }
-                return@bg
-            }
-            val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg))
-            if (id >= 0) {
-                log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
-                // Refresh twice so the app shows up as soon as it exists.
-                Thread.sleep(600)
-                runOnUiThread { refresh() }
-                Thread.sleep(900)
-                // Some phones accept the launch but open the app on the main screen instead.
-                if (Vd.tasks(id).none { it.second == pkg }) {
-                    log(Vd.diagnose(pkg, id))
-                    runOnUiThread {
-                        Toast.makeText(this, "This phone didn't open ${Apps.label(this, pkg)} on the hidden display. " +
-                            "It may not support apps on secondary displays. Turn on Debug log and share it.", Toast.LENGTH_LONG).show()
-                    }
+            try {
+                // Already running on a hidden display: just open it instead of starting a second copy.
+                val existing = Vd.displayOf(pkg)
+                if (existing != null) {
+                    runOnUiThread { openViewer(existing) }
+                    return@bg
                 }
-                // Once the process exists, set its sound state again.
-                Vd.syncAudio(applicationContext, pkg)
-                runOnUiThread { refresh() }
+                if (!Vd.supportsSecondaryDisplays()) {
+                    log("Blocked launch of $pkg: this phone reports no support for apps on secondary displays.")
+                    runOnUiThread { showUnsupported() }
+                    return@bg
+                }
+                val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg))
+                if (id >= 0) {
+                    log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
+                    // Refresh twice so the app shows up as soon as it exists.
+                    Thread.sleep(600)
+                    runOnUiThread { refresh() }
+                    Thread.sleep(900)
+                    // Some phones accept the launch but open the app on the main screen instead.
+                    if (Vd.tasks(id).none { it.second == pkg }) {
+                        log(Vd.diagnose(pkg, id))
+                        runOnUiThread {
+                            Toast.makeText(this, "This phone didn't open ${Apps.label(this, pkg)} on the hidden display. " +
+                                "It may not support apps on secondary displays. Turn on Debug log and share it.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    // Once the process exists, set its sound state again.
+                    Vd.syncAudio(applicationContext, pkg)
+                    runOnUiThread { refresh() }
+                }
+            } finally {
+                launching.remove(pkg)
             }
         }
     }
@@ -983,6 +1072,49 @@ class MainActivity : Activity() {
             }
         }
         return row
+    }
+
+    /** A row with an On / Off / Default choice for one app. [defaultOn] is what Default currently means. */
+    private fun settingsTri(title: String, sub: String, current: Int, defaultOn: Boolean, onChange: (Int) -> Unit): View {
+        var value = current
+        fun label(v: Int) = when (v) {
+            1 -> "On"
+            0 -> "Off"
+            else -> "Default (${if (defaultOn) "On" else "Off"})"
+        }
+        val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
+        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        fun style() {
+            val on = value == 1 || (value < 0 && defaultOn)
+            pill.text = label(value)
+            pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
+            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
+        }
+        style()
+        val row = settingRowBase(title, sub, pill)
+        row.setOnClickListener {
+            Ui.sheet(this) { body, dlg ->
+                body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
+                Ui.add(body, Ui.text(this, sub, 14f, Ui.MUTED), top = 2)
+                fun pick(v: Int) { value = v; style(); onChange(v); dlg.dismiss() }
+                Ui.group(body, listOf(-1, 1, 0).map { v -> optionRow(label(v), value == v) { pick(v) } }, top = 16)
+            }
+        }
+        return row
+    }
+
+    private fun showAppViewerOptions(pkg: String) {
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, Apps.label(this, pkg), 22f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "Viewer options for this app only. \"Default\" uses the value from Settings. Applies next time you open the viewer.", 14f, Ui.MUTED), top = 2)
+            Ui.group(body, listOf(
+                settingsTri("Suppress keyboard requests", "Keyboard only opens from the keyboard icon.",
+                    AppSettings.appSuppressKeyboard(this, pkg), AppSettings.suppressKeyboard(this)) { AppSettings.setAppSuppressKeyboard(this, pkg, it) },
+                settingsTri("Back gesture controls the app", "On: back goes back inside the app. Off: back does nothing.",
+                    AppSettings.appBackGesture(this, pkg), AppSettings.backGesture(this)) { AppSettings.setAppBackGesture(this, pkg, it) }
+            ), top = 16)
+            Ui.add(body, Ui.button(this, "Done", Ui.Kind.FILLED) { dlg.dismiss() }, top = 20)
+        }
     }
 
     private fun showAppAutoStop(pkg: String) {

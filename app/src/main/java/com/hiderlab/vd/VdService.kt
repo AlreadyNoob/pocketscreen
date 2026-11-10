@@ -92,7 +92,8 @@ class VdService : IVdService.Stub() {
 
     override fun releaseDisplay(id: Int): String {
         displays.remove(id)?.let { cleanup(it) }
-        if (displays.isEmpty()) run("settings delete global force_resizable_activities")
+        // Spawning a shell takes a moment, so do it in the background and return right away.
+        if (displays.isEmpty()) Thread { run("settings delete global force_resizable_activities") }.start()
         return "OK"
     }
 

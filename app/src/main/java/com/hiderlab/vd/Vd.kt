@@ -154,7 +154,9 @@ object Vd {
         val id = displayOf(pkg)
         val r = stopApp(ctx, pkg)
         if (id != null) {
-            Thread.sleep(700)
+            // Remove the display as soon as the app's task is gone instead of waiting a fixed time.
+            var tries = 0
+            while (tries < 10 && tasks(id).isNotEmpty()) { Thread.sleep(100); tries++ }
             if (tasks(id).isEmpty()) releaseOnly(ctx, id)
         }
         return r
@@ -374,6 +376,8 @@ object Vd {
         setMutedPref(ctx, pkg, false)
         applyAudio(pkg, false)
         markSession(ctx, pkg)
+        clearCrash(ctx, pkg)
+        displays.firstOrNull { it.id == display }?.let { orientPrefs(ctx).edit().putBoolean(pkg, it.landscape).apply() }
         // If it is already open on the main screen, try to move that task instead of starting a copy.
         val onMain = tasks(0).firstOrNull { it.second == pkg }
         if (onMain != null) {
@@ -392,6 +396,58 @@ object Vd {
      */
     fun supportsSecondaryDisplays(): Boolean =
         exec("cmd package has-feature android.software.activities_on_secondary_displays").trim() != "false"
+
+    // ---- unexpected exits ----
+
+    /** An app PocketScreen launched whose process died without us stopping it. */
+    data class Crash(val pkg: String, val whenMs: Long, val reason: String, val landscape: Boolean)
+
+    private fun crashPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("crashes", Context.MODE_PRIVATE)
+    private fun orientPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("orient", Context.MODE_PRIVATE)
+
+    fun crashes(ctx: Context): List<Crash> = crashPrefs(ctx).all.mapNotNull { (pkg, v) ->
+        val p = (v as? String)?.split("|", limit = 3) ?: return@mapNotNull null
+        val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+        Crash(pkg, t, p.getOrNull(2).orEmpty(), p.getOrNull(1) == "1")
+    }.sortedByDescending { it.whenMs }
+
+    fun clearCrash(ctx: Context, pkg: String) { crashPrefs(ctx).edit().remove(pkg).apply() }
+
+    /** Why the system says [pkg]'s last process ended, e.g. "CRASH" or "EXIT_SELF". Null if it can't be read. */
+    private fun lastExitReason(pkg: String): String? {
+        val out = exec("dumpsys activity exit-info $pkg")
+        return Regex("reason=\\d+ \\(([A-Z_ ]+)\\)").find(out)?.groupValues?.get(1)?.trim()
+    }
+
+    private val EXPECTED_EXITS = setOf("EXIT_SELF", "USER_REQUESTED", "USER_STOPPED", "PACKAGE_UPDATED", "PACKAGE_STATE_CHANGE", "PERMISSION_CHANGE")
+
+    /**
+     * Looks for apps we launched that are no longer on any hidden display, whose process is gone, and
+     * that we did not stop ourselves. Those are recorded as unexpected exits. Returns the new ones.
+     * [onDisplays] are the packages currently on a hidden display, [busy] are being launched right now.
+     */
+    fun checkCrashes(ctx: Context, onDisplays: Set<String>, busy: Set<String>): List<Crash> {
+        if (service == null) return emptyList()
+        val found = ArrayList<Crash>()
+        val now = System.currentTimeMillis()
+        for ((pkg, v) in sessionPrefs(ctx).all) {
+            val started = v as? Long ?: continue
+            if (pkg in onDisplays || pkg in busy || now - started < 10_000L) continue
+            val pid = exec("pidof $pkg").trim()
+            if (pid.startsWith("ERR") ) continue
+            if (pid.isNotEmpty() && pid.firstOrNull()?.isDigit() == true) continue // still alive, just not on a display
+            val reason = lastExitReason(pkg)
+            clearSession(ctx, pkg)
+            restoreAudio(ctx, pkg)
+            if (reason != null && reason in EXPECTED_EXITS) continue
+            val c = Crash(pkg, now, reason?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Reason unknown",
+                orientPrefs(ctx).getBoolean(pkg, false))
+            crashPrefs(ctx).edit().putString(pkg, "${c.whenMs}|${if (c.landscape) 1 else 0}|${c.reason}").apply()
+            log("Unexpected exit: $pkg (${c.reason})")
+            found.add(c)
+        }
+        return found
+    }
 
     /** Which display a package's task is on, according to the system, or null if no task is found. */
     fun displayOfTask(pkg: String): Int? {

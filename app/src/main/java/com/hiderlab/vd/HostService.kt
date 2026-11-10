@@ -20,6 +20,27 @@ class HostService : Service() {
     companion object {
         const val ACTION_STOP_ALL = "com.hiderlab.vd.STOP_ALL"
         private const val CHANNEL = "hidden_display"
+        private const val ALERT_CHANNEL = "app_alerts"
+
+        /** Tells the user an app closed unexpectedly. Silently skipped if notifications are not allowed. */
+        fun notifyCrash(ctx: android.content.Context, c: Vd.Crash) {
+            try {
+                val nm = ctx.getSystemService(NotificationManager::class.java)
+                nm.createNotificationChannel(NotificationChannel(ALERT_CHANNEL, "App alerts", NotificationManager.IMPORTANCE_DEFAULT))
+                val open = PendingIntent.getActivity(
+                    ctx, 2, Intent(ctx, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                val n = Notification.Builder(ctx, ALERT_CHANNEL)
+                    .setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setContentTitle("${Apps.label(ctx, c.pkg)} closed unexpectedly")
+                    .setContentText("${c.reason}. Open PocketScreen to relaunch it.")
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .build()
+                nm.notify(c.pkg.hashCode(), n)
+            } catch (_: Throwable) {}
+        }
     }
 
     @Volatile private var watching = false
@@ -48,6 +69,9 @@ class HostService : Service() {
     private fun checkLimits(ctx: android.content.Context) {
         if (Vd.service == null) return
         Vd.refreshInfo()
+        // Note apps that died on their own, even if their display is already gone.
+        val onDisplays = Vd.displays.flatMap { d -> Vd.tasks(d.id).map { it.second } }.toSet()
+        for (c in Vd.checkCrashes(ctx, onDisplays, emptySet())) notifyCrash(ctx, c)
         if (Vd.displays.isEmpty()) return
 
         val b = ctx.registerReceiver(null, IntentFilter(I2.ACTION_BATTERY_CHANGED))

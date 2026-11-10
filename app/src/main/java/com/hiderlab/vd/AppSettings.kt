@@ -14,6 +14,16 @@ object AppSettings {
     fun backGesture(c: Context): Boolean = p(c).getBoolean("back_gesture", true)
     fun setBackGesture(c: Context, on: Boolean) { p(c).edit().putBoolean("back_gesture", on).apply() }
 
+    /** Per-app overrides for the two viewer options above. -1 = use the Settings value, 0 = off, 1 = on. */
+    fun appBackGesture(c: Context, pkg: String): Int = p(c).getInt("back_$pkg", -1)
+    fun setAppBackGesture(c: Context, pkg: String, v: Int) { p(c).edit().putInt("back_$pkg", v).apply() }
+    fun appSuppressKeyboard(c: Context, pkg: String): Int = p(c).getInt("kb_$pkg", -1)
+    fun setAppSuppressKeyboard(c: Context, pkg: String, v: Int) { p(c).edit().putInt("kb_$pkg", v).apply() }
+    fun effectiveBackGesture(c: Context, pkg: String): Boolean =
+        appBackGesture(c, pkg).let { if (it < 0) backGesture(c) else it == 1 }
+    fun effectiveSuppressKeyboard(c: Context, pkg: String): Boolean =
+        appSuppressKeyboard(c, pkg).let { if (it < 0) suppressKeyboard(c) else it == 1 }
+
     /** Launch apps with "exclude from Recents" so they don't show there while on a hidden display. On by default. */
     fun hideFromRecents(c: Context): Boolean = p(c).getBoolean("hide_recents", true)
     fun setHideFromRecents(c: Context, on: Boolean) { p(c).edit().putBoolean("hide_recents", on).apply() }
