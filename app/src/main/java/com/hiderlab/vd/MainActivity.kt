@@ -101,6 +101,13 @@ class MainActivity : Activity() {
         titles.addView(Ui.text(this, "PocketScreen", 28f, Ui.TEXT, bold = true))
         titles.addView(Ui.text(this, "Apps on hidden displays", 14f, Ui.MUTED))
         head.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        val gearBtn = IconView(this, IconView.SETTINGS)
+        gearBtn.contentDescription = "Settings"
+        gearBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 24f), Ui.hair(), dp(1)), Ui.dpf(this, 24f))
+        gearBtn.setOnClickListener { showSettings() }
+        val gearLp = LinearLayout.LayoutParams(-2, -2)
+        gearLp.rightMargin = dp(8)
+        head.addView(gearBtn, gearLp)
         moreBtn = IconView(this, IconView.MORE)
         moreBtn.contentDescription = "More options"
         moreBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 24f), Ui.hair(), dp(1)), Ui.dpf(this, 24f))
@@ -329,8 +336,8 @@ class MainActivity : Activity() {
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
-            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} dpi" +
-                (if (cfg != null) " · custom" else ""), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
+            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"}, ${sz.first}×${sz.second} at ${sz.third} dpi" +
+                (if (cfg != null) ", custom settings" else ""), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -425,8 +432,8 @@ class MainActivity : Activity() {
         name.ellipsize = TextUtils.TruncateAt.END
         col.addView(name)
         val mins = ((System.currentTimeMillis() - c.whenMs) / 60000L).coerceAtLeast(0)
-        col.addView(Ui.text(this, "Closed unexpectedly · " + (if (mins < 1) "just now" else "${Vd.fmtMinutes(mins)} ago"), 13f, Ui.BAD))
-        if (c.reason.isNotBlank()) col.addView(Ui.text(this, c.reason, 12f, Ui.MUTED))
+        col.addView(Ui.text(this, "Closed unexpectedly · " + (if (mins < 1) "Just now" else "${Vd.fmtMinutes(mins)} ago"), 13f, Ui.BAD))
+        if (c.reason.isNotBlank()) col.addView(Ui.text(this, "Reason: ${c.reason}", 12f, Ui.MUTED))
         val btn = Ui.text(this, "Relaunch", 13f, Ui.ON_ACCENT_CONT, bold = true)
         btn.setPadding(dp(14), dp(7), dp(14), dp(7))
         btn.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 18f))
@@ -460,14 +467,17 @@ class MainActivity : Activity() {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
-        fun detail(d: Vd.Disp) = "#${d.id} · ${if (d.landscape) "Landscape" else "Portrait"} · ${d.w}×${d.h}" +
-            (if (d.dpi > 0) " · ${d.dpi} dpi" else "")
+        fun detail(d: Vd.Disp) = "Display ${d.id}, ${if (d.landscape) "landscape" else "portrait"}, ${d.w}×${d.h}" +
+            (if (d.dpi > 0) " at ${d.dpi} dpi" else "")
 
         val rows = ArrayList<View>()
         for (c in crashes) if (list.none { it.pkg == c.pkg }) rows.add(crashRow(c))
         for (r in list) {
+            val outer = LinearLayout(this)
+            outer.orientation = LinearLayout.VERTICAL
+            outer.isClickable = true
+            outer.setOnClickListener { openViewer(r.display.id) }
             val row = listRow()
-            row.setOnClickListener { openViewer(r.display.id) }
             row.addView(appIcon(r.pkg), LinearLayout.LayoutParams(dp(46), dp(46)))
 
             val col = LinearLayout(this)
@@ -478,25 +488,27 @@ class MainActivity : Activity() {
             val nameRow = LinearLayout(this)
             nameRow.orientation = LinearLayout.HORIZONTAL
             nameRow.gravity = Gravity.CENTER_VERTICAL
+            val liveLp = LinearLayout.LayoutParams(dp(8), dp(8))
+            liveLp.rightMargin = dp(8)
+            nameRow.addView(Ui.dot(this, Ui.OK, 8), liveLp)
             nameRow.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
-            val liveLp = LinearLayout.LayoutParams(dp(7), dp(7))
-            liveLp.leftMargin = dp(8)
-            liveLp.rightMargin = dp(10)
-            nameRow.addView(Ui.dot(this, Ui.OK, 7), liveLp)
             col.addView(nameRow)
             col.addView(Ui.text(this, detail(r.display), 13f, Ui.MUTED).also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
             val muted = Vd.isMuted(this, r.pkg)
-            val extra = listOfNotNull(
-                Vd.sessionText(this, r.pkg)?.let { "Running $it" },
-                Vd.remainingText(this, r.pkg),
-                stats[r.pkg]?.memMb?.let { "$it MB" },
-                stats[r.pkg]?.cpu?.let { "CPU ${if (it < 10) String.format("%.1f", it) else it.toInt().toString()}%" },
-                if (muted) "Muted" else null
-            ).joinToString(" · ")
-            if (extra.isNotEmpty()) {
-                val st = Ui.pill(this, extra, Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT, 11.5f)
-                Ui.add(col, st, top = 8, w = ViewGroup.LayoutParams.WRAP_CONTENT)
+            val pills = LinearLayout(this)
+            pills.orientation = LinearLayout.HORIZONTAL
+            fun addPill(label: String, fg: Int, bg: Int) {
+                val p = Ui.pill(this, label, fg, bg, 11f)
+                p.isSingleLine = true
+                p.setPadding(dp(8), dp(3), dp(8), dp(3))
+                val lp = LinearLayout.LayoutParams(-2, -2)
+                if (pills.childCount > 0) lp.leftMargin = dp(5)
+                pills.addView(p, lp)
             }
+            Vd.sessionText(this, r.pkg)?.let { addPill("Running $it", Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT) }
+            Vd.remainingText(this, r.pkg)?.let { addPill(it, Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT) }
+            stats[r.pkg]?.memMb?.let { addPill("$it MB RAM", Ui.MUTED, Ui.SURFACE2) }
+            stats[r.pkg]?.cpu?.let { addPill("${if (it < 10) String.format("%.1f", it) else it.toInt().toString()}% CPU", Ui.MUTED, Ui.SURFACE2) }
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -530,8 +542,25 @@ class MainActivity : Activity() {
                     }
                 ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
             }
+            val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME)
+            muteBtn.tint = if (muted) Ui.MUTED else Ui.ACCENT
+            muteBtn.contentDescription = if (muted) "Unmute sound" else "Mute sound"
+            muteBtn.setOnClickListener {
+                bg {
+                    log("${if (muted) "Unmute" else "Mute"} ${Apps.label(applicationContext, r.pkg)}:\n" +
+                        Vd.setMuted(applicationContext, r.pkg, !muted))
+                    runOnUiThread { refreshTasks() }
+                }
+            }
+            row.addView(muteBtn)
             row.addView(more)
-            rows.add(row)
+            outer.addView(row)
+            if (pills.childCount > 0) {
+                row.setPadding(dp(16), dp(14), dp(4), dp(10))
+                pills.setPadding(dp(16), 0, dp(12), dp(14))
+                outer.addView(pills, LinearLayout.LayoutParams(-1, -2))
+            }
+            rows.add(outer)
         }
 
         // Displays with no app on them
@@ -961,7 +990,6 @@ class MainActivity : Activity() {
     private fun showMainMenu() {
         val items = ArrayList<Ui.MenuItem>()
         items.add(Ui.MenuItem("Refresh") { refresh() })
-        items.add(Ui.MenuItem("Settings") { showSettings() })
         if (Vd.service != null && Vd.displays.isNotEmpty()) {
             items.add(Ui.MenuItem("Stop all and destroy displays", danger = true) { confirmStopAll() })
         }

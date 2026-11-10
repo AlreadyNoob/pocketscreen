@@ -497,6 +497,9 @@ class IconView(ctx: Context, private val kind: Int, private val sizeDp: Int = 48
         const val PLUS = 3
         const val CHECK = 4
         const val CHEVRON = 5
+        const val SETTINGS = 6
+        const val VOLUME = 7
+        const val MUTED = 8
     }
 
     var tint: Int = Ui.TEXT
@@ -571,6 +574,36 @@ class IconView(ctx: Context, private val kind: Int, private val sizeDp: Int = 48
             c.drawCircle(cx, cy - gap, r, p)
             c.drawCircle(cx, cy, r, p)
             c.drawCircle(cx, cy + gap, r, p)
+        } else if (kind == SETTINGS) {
+            val s = minOf(width, height) * 0.2f
+            c.drawCircle(cx, cy, s * 0.62f, p)
+            for (i in 0 until 8) {
+                val a = Math.toRadians(i * 45.0)
+                val ca = Math.cos(a).toFloat()
+                val sa = Math.sin(a).toFloat()
+                c.drawLine(cx + ca * s * 1.2f, cy + sa * s * 1.2f, cx + ca * s * 1.75f, cy + sa * s * 1.75f, p)
+            }
+            c.drawCircle(cx, cy, s * 1.2f, p)
+        } else if (kind == VOLUME || kind == MUTED) {
+            val s = minOf(width, height) * 0.19f
+            val ox = cx - s * 0.7f
+            val body = Path()
+            body.moveTo(ox - 1.1f * s, cy - 0.55f * s)
+            body.lineTo(ox - 0.3f * s, cy - 0.55f * s)
+            body.lineTo(ox + 0.6f * s, cy - 1.25f * s)
+            body.lineTo(ox + 0.6f * s, cy + 1.25f * s)
+            body.lineTo(ox - 0.3f * s, cy + 0.55f * s)
+            body.lineTo(ox - 1.1f * s, cy + 0.55f * s)
+            body.close()
+            c.drawPath(body, p)
+            if (kind == VOLUME) {
+                for (r in floatArrayOf(0.9f * s, 1.7f * s)) {
+                    c.drawArc(RectF(ox + 0.6f * s - r, cy - r, ox + 0.6f * s + r, cy + r), -48f, 96f, false, p)
+                }
+            } else {
+                c.drawLine(ox + 1.3f * s, cy - 0.7f * s, ox + 2.5f * s, cy + 0.7f * s, p)
+                c.drawLine(ox + 1.3f * s, cy + 0.7f * s, ox + 2.5f * s, cy - 0.7f * s, p)
+            }
         } else {
             val s = minOf(width, height) * 0.2f
             val w = s * 1.7f
