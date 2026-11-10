@@ -30,7 +30,7 @@ import android.window.OnBackInvokedDispatcher
 /**
  * Live view of one hidden display (pass its id as the "display" extra). Touches go to the
  * display, the phone's keyboard (or a physical one) types straight into the focused app.
- * Back (keys, or the system's back once the bars are showing) goes to the app or is ignored, per Settings;
+ * Back (an edge swipe recognised here, or the back key) goes to the app or is ignored, per Settings;
  * the arrow in the top bar is the way out.
  */
 class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
@@ -40,6 +40,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var backControls = true
     private var lastBack = 0L
     private var barsShown = false
+    // Edge swipe -> Back, done here because the system's own back swipe is excluded (see updateGestureExclusion).
+    private var edgeTracking = false
+    private var edgeFired = false
+    private var edgeStartX = 0f
+    private var edgeStartY = 0f
+    private var edgeFromLeft = false
     private var pkgOnDisplay: String? = null
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
@@ -307,6 +313,47 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         try {
             Vd.service?.key(displayId, KeyEvent.KEYCODE_BACK, 0)
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Back from a swipe that starts at the left or right screen edge. The edges are excluded from
+     * the system gestures, so Android never sees this swipe and has no reason to reveal the bars;
+     * the app gets the touches and recognises the swipe itself. Nothing is swallowed up front: the
+     * touches still reach the display until the swipe turns out to be a back swipe, at which point
+     * the display's touch is cancelled and Back is sent.
+     */
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        if (!backControls) return super.dispatchTouchEvent(e)
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val w = resources.displayMetrics.widthPixels
+                val zone = Ui.dp(this, 32)
+                edgeFired = false
+                edgeTracking = e.rawX <= zone || e.rawX >= w - zone
+                edgeFromLeft = e.rawX <= zone
+                edgeStartX = e.rawX
+                edgeStartY = e.rawY
+            }
+            MotionEvent.ACTION_MOVE -> if (edgeTracking && !edgeFired && e.pointerCount == 1) {
+                val dx = if (edgeFromLeft) e.rawX - edgeStartX else edgeStartX - e.rawX
+                val dy = Math.abs(e.rawY - edgeStartY)
+                if (dx > Ui.dp(this, 40) && dx > dy) {
+                    edgeFired = true
+                    val cancel = MotionEvent.obtain(e)
+                    cancel.action = MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(cancel)
+                    cancel.recycle()
+                    sendBack()
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> edgeTracking = false
+        }
+        val swallow = edgeFired
+        if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
+            edgeTracking = false
+            edgeFired = false
+        }
+        return if (swallow) true else super.dispatchTouchEvent(e)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
