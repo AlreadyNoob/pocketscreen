@@ -386,6 +386,13 @@ object Vd {
         return exec("am start --display $display -f $flags -n $comp")
     }
 
+    /**
+     * False only when Android says outright that this phone cannot run apps on secondary displays
+     * (low-RAM / Go builds, for example). Then launches always end up on the main screen.
+     */
+    fun supportsSecondaryDisplays(): Boolean =
+        exec("cmd package has-feature android.software.activities_on_secondary_displays").trim() != "false"
+
     /** Which display a package's task is on, according to the system, or null if no task is found. */
     fun displayOfTask(pkg: String): Int? {
         val out = exec("dumpsys activity activities | grep -E 'Display #|mDisplayId=|Task\\{|ActivityRecord\\{' | grep -E 'Display #|$pkg'")
@@ -411,7 +418,6 @@ object Vd {
             appendLine("freeform setting: " + sh("settings get global enable_freeform_support"))
             appendLine("non-resizable multi-window: " + sh("settings get global enable_non_resizable_multi_window"))
             appendLine("task display: " + displayOfTask(pkg))
-            appendLine("display $display: " + sh("dumpsys display | grep -E \"mDisplayId=$display\\b\" -A0 | head -3"))
         }
     }
 

@@ -633,6 +633,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showUnsupported() {
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, "Not supported on this phone", 22f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this,
+                "Android on this phone says it cannot run apps on extra displays. This is common on low-memory " +
+                "\"Go\" phones. Apps would open on the main screen instead of a hidden display, so PocketScreen " +
+                "doesn't launch them. No developer setting changes this.", 14f, Ui.MUTED), top = 8)
+            Ui.add(body, Ui.button(this, "OK", Ui.Kind.FILLED) { dlg.dismiss() }, top = 20)
+        }
+    }
+
     private fun launchApp(pkg: String, landscape: Boolean) {
         Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show()
         bg {
@@ -640,6 +651,11 @@ class MainActivity : Activity() {
             val existing = Vd.displayOf(pkg)
             if (existing != null) {
                 runOnUiThread { openViewer(existing) }
+                return@bg
+            }
+            if (!Vd.supportsSecondaryDisplays()) {
+                log("Blocked launch of $pkg: this phone reports no support for apps on secondary displays.")
+                runOnUiThread { showUnsupported() }
                 return@bg
             }
             val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg))
