@@ -92,41 +92,48 @@ class MainActivity : Activity() {
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
-        val logo = LogoView(this, 48)
+        val logo = LogoView(this, 44)
         val logoLp = LinearLayout.LayoutParams(-2, -2)
-        logoLp.rightMargin = dp(14)
+        logoLp.rightMargin = dp(12)
         head.addView(logo, logoLp)
         val titles = LinearLayout(this)
         titles.orientation = LinearLayout.VERTICAL
-        titles.addView(Ui.text(this, "PocketScreen", 28f, Ui.TEXT, bold = true))
-        titles.addView(Ui.text(this, "Apps on hidden displays", 14f, Ui.MUTED))
+        titles.addView(Ui.text(this, "PocketScreen", 26f, Ui.TEXT, bold = true))
+        titles.addView(Ui.text(this, "Apps on hidden displays", 13f, Ui.MUTED))
         head.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
-        val gearBtn = IconView(this, IconView.SETTINGS)
+        // settings + more share one rounded toolbar instead of two separate circles
+        val tools = LinearLayout(this)
+        tools.orientation = LinearLayout.HORIZONTAL
+        tools.gravity = Gravity.CENTER_VERTICAL
+        tools.background = Ui.surface(this, Ui.R_BTN)
+        tools.setPadding(dp(2), dp(2), dp(2), dp(2))
+        val gearBtn = IconView(this, IconView.SETTINGS, 44)
         gearBtn.contentDescription = "Settings"
-        gearBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 24f), Ui.hair(), dp(1)), Ui.dpf(this, 24f))
         gearBtn.setOnClickListener { showSettings() }
-        val gearLp = LinearLayout.LayoutParams(-2, -2)
-        gearLp.rightMargin = dp(8)
-        head.addView(gearBtn, gearLp)
-        moreBtn = IconView(this, IconView.MORE)
+        tools.addView(gearBtn, LinearLayout.LayoutParams(-2, -2))
+        moreBtn = IconView(this, IconView.MORE, 44)
         moreBtn.contentDescription = "More options"
-        moreBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 24f), Ui.hair(), dp(1)), Ui.dpf(this, 24f))
         moreBtn.setOnClickListener { showMainMenu() }
-        head.addView(moreBtn, LinearLayout.LayoutParams(-2, -2))
+        tools.addView(moreBtn, LinearLayout.LayoutParams(-2, -2))
+        head.addView(tools, LinearLayout.LayoutParams(-2, -2))
         Ui.add(root, head, top = 8)
 
         chipsRow = LinearLayout(this)
         chipsRow.orientation = LinearLayout.HORIZONTAL
-        Ui.add(root, chipsRow, top = 16)
+        Ui.add(root, chipsRow, top = 18)
 
         // setup card: only shown while something still needs doing
         setupCard = Ui.card(this)
-        helperView = Ui.text(this, "", 15f, Ui.TEXT)
-        setupCard.addView(helperView)
+        setupCard.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, Ui.R_CARD.toFloat()))
+        setupCard.addView(Ui.text(this, "Finish setup", 17f, Ui.ON_ACCENT_CONT, bold = true))
+        helperView = Ui.text(this, "", 14f, Ui.ON_ACCENT_CONT)
+        helperView.alpha = 0.85f
+        helperView.setLineSpacing(0f, 1.12f)
+        Ui.add(setupCard, helperView, top = 6)
         btnGrant = Ui.button(this, "Grant Shizuku permission", Ui.Kind.FILLED) { grant() }
-        Ui.add(setupCard, btnGrant, top = 14)
+        Ui.add(setupCard, btnGrant, top = 16)
         btnConnect = Ui.button(this, "Connect service", Ui.Kind.FILLED) { Vd.connect(applicationContext, force = true) }
-        Ui.add(setupCard, btnConnect, top = 14)
+        Ui.add(setupCard, btnConnect, top = 16)
         Ui.add(root, setupCard, top = 20)
 
         // list fades out under the floating button
@@ -137,11 +144,22 @@ class MainActivity : Activity() {
         )
         frame.addView(fade, FrameLayout.LayoutParams(-1, dp(120), Gravity.BOTTOM))
 
-        // launch: extended floating action button
+        // launch: full-width docked action
         btnLaunch = Ui.fab(this, "Launch app") { pickApp() }
-        val fl = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
-        fl.setMargins(0, 0, dp(20), dp(20))
+        val fl = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM)
+        fl.setMargins(dp(20), 0, dp(20), dp(16)) // docked full-width bar
         frame.addView(btnLaunch, fl)
+
+        // Wide screens (tablets, landscape): keep content in a centered column of at most 600dp.
+        frame.addOnLayoutChangeListener { _, l, _, r, _, _, _, _, _ ->
+            val w = r - l
+            val side = maxOf(dp(20), (w - dp(600)) / 2)
+            if (root.paddingLeft != side) root.setPadding(side, dp(12), side, dp(120))
+            if (fl.leftMargin != side) {
+                fl.setMargins(side, 0, side, dp(16))
+                btnLaunch.layoutParams = fl
+            }
+        }
 
         // quick launch
         presetsHeader = LinearLayout(this)
@@ -252,11 +270,7 @@ class MainActivity : Activity() {
             "Permission" to (if (perm) Ui.OK else if (ping) Ui.WARN else Ui.BAD),
             "Service" to (if (connected) Ui.OK else if (perm) Ui.WARN else Ui.BAD)
         )
-        for ((label, color) in chips) {
-            val lp = LinearLayout.LayoutParams(-2, -2)
-            lp.rightMargin = dp(8)
-            chipsRow.addView(Ui.chip(this, color, label), lp)
-        }
+        chipsRow.addView(Ui.statusStrip(this, chips), LinearLayout.LayoutParams(-1, -2))
 
         helperView.text = when {
             !ping -> "Shizuku isn't running. Start it from wireless debugging, then come back."
@@ -281,7 +295,9 @@ class MainActivity : Activity() {
         t.gravity = Gravity.CENTER
         t.setLineSpacing(0f, 1.15f)
         t.setPadding(dp(28), dp(32), dp(28), dp(32))
-        t.background = Ui.surface(this)
+        val g = Ui.shape(Color.TRANSPARENT, Ui.dpf(this, Ui.R_CARD.toFloat()))
+        g.setStroke(dp(1), Ui.OUTLINE, Ui.dpf(this, 6f), Ui.dpf(this, 5f)) // dashed: "nothing here yet"
+        t.background = g
         return t
     }
 
@@ -292,7 +308,7 @@ class MainActivity : Activity() {
         icon.clipToOutline = true
         icon.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.28f)
+                outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.24f)
             }
         }
         val cached = Apps.icon(this, pkg) { b -> if (icon.tag == pkg) icon.setImageBitmap(b) }
@@ -335,10 +351,19 @@ class MainActivity : Activity() {
             val name = Ui.text(this, Apps.label(this, pkg), 16f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
-            col.addView(name)
-            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"}, ${sz.first}×${sz.second} at ${sz.third} DPI", 13f, Ui.MUTED)
+            val nameRow = LinearLayout(this)
+            nameRow.orientation = LinearLayout.HORIZONTAL
+            nameRow.gravity = Gravity.CENTER_VERTICAL
+            nameRow.addView(name, LinearLayout.LayoutParams(-2, -2, 1f))
+            if (cfg != null) {
+                val custom = Ui.pill(this, "Custom", Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT, 11f)
+                custom.isSingleLine = true
+                custom.setPadding(dp(8), dp(2), dp(8), dp(2))
+                nameRow.addView(custom, LinearLayout.LayoutParams(-2, -2).also { it.leftMargin = dp(8) })
+            }
+            col.addView(nameRow)
+            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} DPI", 13f, Ui.MUTED)
                 .also { it.maxLines = 2; it.ellipsize = TextUtils.TruncateAt.END })
-            if (cfg != null) col.addView(Ui.text(this, "Custom settings", 12f, Ui.ACCENT))
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)
             row.addView(col, cp)
@@ -351,6 +376,13 @@ class MainActivity : Activity() {
                     Ui.MenuItem("Remove from quick launch", danger = true) { Vd.removePreset(this, pkg); renderPresets() }
                 ))
             }
+            // Explicit launch button (the whole row also launches), styled like the mute button on running rows.
+            val play = IconView(this, IconView.PLAY, 40)
+            play.background = Ui.withRipple(Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, Ui.R_FIELD.toFloat())), Ui.dpf(this, Ui.R_FIELD.toFloat()))
+            play.tint = Ui.ON_ACCENT_CONT
+            play.contentDescription = "Launch ${Apps.label(this, pkg)}"
+            play.setOnClickListener { launchApp(pkg, landscape) }
+            row.addView(play, LinearLayout.LayoutParams(-2, -2).also { it.rightMargin = dp(4) })
             row.addView(more)
             rows.add(row)
         }
@@ -437,7 +469,7 @@ class MainActivity : Activity() {
         if (c.reason.isNotBlank()) col.addView(Ui.text(this, "Reason: ${c.reason}", 12f, Ui.MUTED))
         val btn = Ui.text(this, "Relaunch", 13f, Ui.ON_ACCENT_CONT, bold = true)
         btn.setPadding(dp(14), dp(7), dp(14), dp(7))
-        btn.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 18f))
+        btn.background = Ui.withRipple(Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, Ui.R_CHIP.toFloat())), Ui.dpf(this, Ui.R_CHIP.toFloat()))
         btn.setOnClickListener { relaunch(c) }
         Ui.add(col, btn, top = 8, w = ViewGroup.LayoutParams.WRAP_CONTENT)
         val cp = LinearLayout.LayoutParams(0, -2, 1f)
@@ -468,11 +500,10 @@ class MainActivity : Activity() {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
-        fun detail(d: Vd.Disp) = "${if (d.landscape) "Landscape" else "Portrait"}, ${d.w}×${d.h}" +
-            (if (d.dpi > 0) " at ${d.dpi} DPI" else "")
+        fun detail(d: Vd.Disp) = "Display ${d.id} · ${if (d.landscape) "Landscape" else "Portrait"} ${d.w}×${d.h}" +
+            (if (d.dpi > 0) " · ${d.dpi} DPI" else "")
         fun detailLines(d: Vd.Disp, col: LinearLayout) {
             col.addView(Ui.text(this, detail(d), 13f, Ui.MUTED).also { it.maxLines = 2; it.ellipsize = TextUtils.TruncateAt.END })
-            col.addView(Ui.text(this, "Display ${d.id}", 12f, Ui.MUTED))
         }
 
         val rows = ArrayList<View>()
@@ -548,7 +579,7 @@ class MainActivity : Activity() {
                 ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
             }
             val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME, 40)
-            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 20f), Ui.hair(), dp(1)), Ui.dpf(this, 20f))
+            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, Ui.R_FIELD.toFloat())), Ui.dpf(this, Ui.R_FIELD.toFloat()))
             muteBtn.tint = if (muted) Ui.MUTED else Ui.ACCENT
             muteBtn.contentDescription = if (muted) "Unmute sound" else "Mute sound"
             muteBtn.setOnClickListener {
@@ -602,13 +633,13 @@ class MainActivity : Activity() {
 
     private fun pickApp() {
         Ui.sheet(this, 0.8f) { body, dlg ->
-            body.addView(Ui.text(this, "Launch on a hidden display", 22f, Ui.TEXT, bold = true))
+            body.addView(Ui.sheetTitle(this, "Launch on a hidden display"))
 
             val search = EditText(this)
             search.hint = "Search apps"
             search.isSingleLine = true
             Ui.styleInput(this, search)
-            Ui.add(body, search, top = 14)
+            Ui.add(body, search, top = 16)
 
             val shown = ArrayList<Apps.App>()
             val note = Ui.text(this, "Loading apps…", 13f, Ui.MUTED)
@@ -623,8 +654,16 @@ class MainActivity : Activity() {
                     val row = (convertView as? LinearLayout) ?: LinearLayout(this@MainActivity).also {
                         it.orientation = LinearLayout.HORIZONTAL
                         it.gravity = Gravity.CENTER_VERTICAL
-                        it.setPadding(dp(8), dp(10), dp(8), dp(10))
-                        it.addView(ImageView(this@MainActivity), LinearLayout.LayoutParams(dp(42), dp(42)))
+                        it.setPadding(dp(10), dp(8), dp(10), dp(8))
+                        it.background = Ui.withRipple(Ui.shape(Color.TRANSPARENT, Ui.dpf(this@MainActivity, Ui.R_FIELD.toFloat())), Ui.dpf(this@MainActivity, Ui.R_FIELD.toFloat()))
+                        val ic = ImageView(this@MainActivity)
+                        ic.clipToOutline = true
+                        ic.outlineProvider = object : ViewOutlineProvider() {
+                            override fun getOutline(view: View, outline: Outline) {
+                                outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.24f)
+                            }
+                        }
+                        it.addView(ic, LinearLayout.LayoutParams(dp(44), dp(44)))
                         val tv = Ui.text(this@MainActivity, "", 16f, Ui.TEXT)
                         tv.isSingleLine = true
                         tv.ellipsize = TextUtils.TruncateAt.END
@@ -677,8 +716,7 @@ class MainActivity : Activity() {
     private fun askOrientation(a: Apps.App, initial: Boolean? = null) {
         var sel: Boolean = initial ?: Vd.presetOf(this, a.pkg) ?: a.landscape ?: false
         Ui.sheet(this) { body, dlg ->
-            body.addView(Ui.text(this, a.label, 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, "Choose the hidden display orientation", 14f, Ui.MUTED), top = 2)
+            body.addView(Ui.sheetTitle(this, a.label, "Choose the hidden display orientation"))
 
             val tiles = LinearLayout(this)
             tiles.orientation = LinearLayout.HORIZONTAL
@@ -696,11 +734,11 @@ class MainActivity : Activity() {
                     t.background = Ui.withRipple(
                         Ui.shape(
                             if (picked) Ui.ACCENT_CONT else Ui.SURFACE2,
-                            Ui.dpf(this, 20f),
+                            Ui.dpf(this, Ui.R_CARD.toFloat()),
                             if (picked) Ui.ACCENT else Ui.hair(),
                             if (picked) dp(2) else dp(1)
                         ),
-                        Ui.dpf(this, 20f)
+                        Ui.dpf(this, Ui.R_CARD.toFloat())
                     )
                     t.isClickable = true
                     t.isFocusable = true
@@ -775,11 +813,10 @@ class MainActivity : Activity() {
 
     private fun showUnsupported() {
         Ui.sheet(this) { body, dlg ->
-            body.addView(Ui.text(this, "Not supported on this phone", 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this,
+            body.addView(Ui.sheetTitle(this, "Not supported on this phone",
                 "Android on this phone says it cannot run apps on extra displays. This is common on low-memory " +
                 "\"Go\" phones. Apps would open on the main screen instead of a hidden display, so PocketScreen " +
-                "doesn't launch them. No developer setting changes this.", 14f, Ui.MUTED), top = 8)
+                "doesn't launch them. No developer setting changes this."))
             Ui.add(body, Ui.button(this, "OK", Ui.Kind.FILLED) { dlg.dismiss() }, top = 20)
         }
     }
@@ -852,8 +889,7 @@ class MainActivity : Activity() {
         onSave: (Vd.SizeCfg) -> Unit, onReset: () -> Unit
     ) {
         Ui.sheet(this) { body, dlg ->
-            body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, subtitle, 14f, Ui.MUTED), top = 2)
+            body.addView(Ui.sheetTitle(this, title, subtitle))
 
             var match = cfg.matchRatio
 
@@ -939,8 +975,8 @@ class MainActivity : Activity() {
                     val on = f.text.toString() == v.toString()
                     b.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.TEXT)
                     b.background = Ui.withRipple(
-                        Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 26f), if (on) Ui.ACCENT else Ui.hair(), dp(1)),
-                        Ui.dpf(this, 26f)
+                        Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, Ui.R_CHIP.toFloat()), if (on) Ui.ACCENT else Ui.hair(), dp(1)),
+                        Ui.dpf(this, Ui.R_CHIP.toFloat())
                     )
                 }
                 val err = valid()
@@ -1004,31 +1040,35 @@ class MainActivity : Activity() {
     }
 
     /** Title + subtitle on the left, [trailing] view (switch, value, chevron) on the right. */
-    private fun settingRowBase(title: String, sub: String?, trailing: View?): LinearLayout {
+    private fun settingRowBase(title: String, sub: String?, trailing: View?, titleColor: Int = Ui.TEXT): LinearLayout {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.minimumHeight = dp(70)
-        row.setPadding(dp(20), dp(12), dp(16), dp(12))
+        row.minimumHeight = dp(68)
+        row.setPadding(dp(20), dp(14), dp(16), dp(14))
         row.isClickable = true
         row.isFocusable = true
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
-        col.addView(Ui.text(this, title, 16f, Ui.TEXT, bold = true))
-        if (sub != null) col.addView(Ui.text(this, sub, 13f, Ui.MUTED))
+        col.addView(Ui.text(this, title, 16f, titleColor, bold = true))
+        if (sub != null) {
+            val st = Ui.text(this, sub, 13f, Ui.MUTED)
+            st.setLineSpacing(0f, 1.1f)
+            col.addView(st, LinearLayout.LayoutParams(-2, -2).also { it.topMargin = dp(2) })
+        }
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         if (trailing != null) {
             val lp = LinearLayout.LayoutParams(-2, -2)
-            lp.leftMargin = dp(12)
+            lp.leftMargin = dp(16)
             row.addView(trailing, lp)
         }
         return row
     }
 
-    private fun settingsRow(title: String, sub: String, onClick: () -> Unit): View {
+    private fun settingsRow(title: String, sub: String, danger: Boolean = false, onClick: () -> Unit): View {
         val chev = IconView(this, IconView.CHEVRON, 24, false)
         chev.tint = Ui.MUTED
-        val row = settingRowBase(title, sub, chev)
+        val row = settingRowBase(title, sub, chev, if (danger) Ui.BAD else Ui.TEXT)
         row.setOnClickListener { onClick() }
         return row
     }
@@ -1084,18 +1124,18 @@ class MainActivity : Activity() {
     ): View {
         var value = current
         val pill = Ui.pill(this, "", Ui.TEXT, Ui.SURFACE2, 13f)
-        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        pill.setPadding(dp(12), dp(6), dp(12), dp(6))
         fun style() {
             val on = value > 0 || (value < 0 && (defaultValue ?: 0) > 0)
             pill.text = limitLabel(isBattery, value, defaultValue)
             pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
-            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
+            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, Ui.R_CHIP.toFloat()))
         }
         style()
         val row = settingRowBase(title, null, pill)
         row.setOnClickListener {
             Ui.sheet(this, 0.85f) { body, dlg ->
-                body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
+                body.addView(Ui.sheetTitle(this, title))
                 val scroll = ScrollView(this)
                 scroll.isVerticalScrollBarEnabled = false
                 val col = LinearLayout(this)
@@ -1153,19 +1193,18 @@ class MainActivity : Activity() {
         val title = "Refresh rate"
         var value = current
         val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
-        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        pill.setPadding(dp(12), dp(6), dp(12), dp(6))
         fun style() {
             val shown = if (value < 0) (defaultValue ?: 0) else value
             pill.text = if (value < 0) hzLabel(shown, null) else hzLabel(value, null)
             pill.setTextColor(if (shown > 0) Ui.ON_ACCENT_CONT else Ui.MUTED)
-            pill.background = Ui.shape(if (shown > 0) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
+            pill.background = Ui.shape(if (shown > 0) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, Ui.R_CHIP.toFloat()))
         }
         style()
         val row = settingRowBase(title, null, pill)
         row.setOnClickListener {
             Ui.sheet(this, 0.85f) { body, dlg ->
-                body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
-                Ui.add(body, Ui.text(this, "Applies the next time the app is launched. Android rounds it to a rate your screen can show, so it can't go above the phone's own maximum.", 13f, Ui.MUTED), top = 2)
+                body.addView(Ui.sheetTitle(this, title, "Applies the next time the app is launched. Android rounds it to a rate your screen can show, so it can't go above the phone's own maximum."))
                 val scroll = ScrollView(this)
                 scroll.isVerticalScrollBarEnabled = false
                 val col = LinearLayout(this)
@@ -1217,19 +1256,18 @@ class MainActivity : Activity() {
         var value = if (current == opposite) opposite else -1
         fun label(v: Int) = if (v < 0) "Same as Settings (${if (defaultOn) "On" else "Off"})" else if (v == 1) "On" else "Off"
         val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
-        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        pill.setPadding(dp(12), dp(6), dp(12), dp(6))
         fun style() {
             val on = (if (value < 0) defaultOn else value == 1)
             pill.text = if (value < 0) (if (defaultOn) "On" else "Off") else label(value)
             pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
-            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
+            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, Ui.R_CHIP.toFloat()))
         }
         style()
         val row = settingRowBase(title, sub, pill)
         row.setOnClickListener {
             Ui.sheet(this) { body, dlg ->
-                body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
-                Ui.add(body, Ui.text(this, sub, 14f, Ui.MUTED), top = 2)
+                body.addView(Ui.sheetTitle(this, title, sub))
                 fun pick(v: Int) { value = v; style(); onChange(v); dlg.dismiss() }
                 Ui.group(body, listOf(-1, opposite).map { v -> optionRow(label(v), value == v) { pick(v) } }, top = 16)
             }
@@ -1240,23 +1278,36 @@ class MainActivity : Activity() {
     /** Everything that is set per app, in one place. Reached from the app's ⋮ menu. */
     private fun showAppSettings(pkg: String, landscape: Boolean) {
         Ui.sheet(this, 0.85f) { body, dlg ->
-            body.addView(Ui.text(this, Apps.label(this, pkg), 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, "Settings for this app only.", 14f, Ui.MUTED), top = 2)
+            // Header: the app's own icon, name and a one-line scope note.
+            val head = LinearLayout(this)
+            head.orientation = LinearLayout.HORIZONTAL
+            head.gravity = Gravity.CENTER_VERTICAL
+            head.addView(appIcon(pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
+            val headText = LinearLayout(this)
+            headText.orientation = LinearLayout.VERTICAL
+            val headName = Ui.text(this, Apps.label(this, pkg), 24f, Ui.TEXT, bold = true)
+            headName.isSingleLine = true
+            headName.ellipsize = TextUtils.TruncateAt.END
+            headText.addView(headName)
+            headText.addView(Ui.text(this, "Settings for this app only", 13f, Ui.MUTED))
+            head.addView(headText, LinearLayout.LayoutParams(0, -2, 1f).also { it.leftMargin = dp(14) })
+            body.addView(head, LinearLayout.LayoutParams(-1, -2))
             val scroll = ScrollView(this)
             scroll.isVerticalScrollBarEnabled = false
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
             scroll.addView(col)
-            Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
+            Ui.add(body, scroll, top = 8, h = 0, weight = 1f)
 
             fun section(title: String, rows: List<View>, note: String? = null) {
-                Ui.add(col, Ui.sectionLabel(this, title), top = 22)
+                Ui.add(col, Ui.sectionLabel(this, title), top = if (col.childCount == 0) 8 else 26)
                 val box = LinearLayout(this)
                 box.orientation = LinearLayout.VERTICAL
                 Ui.add(col, box, top = 8)
                 Ui.group(box, rows)
                 if (note != null) {
                     val n = Ui.text(this, note, 12f, Ui.MUTED)
+                    n.setLineSpacing(0f, 1.15f)
                     n.setPadding(dp(8), 0, dp(8), 0)
                     Ui.add(col, n, top = 8)
                 }
@@ -1295,22 +1346,24 @@ class MainActivity : Activity() {
 
     private fun showSettings() {
         Ui.sheet(this, 0.85f) { body, dlg ->
-            body.addView(Ui.text(this, "Settings", 22f, Ui.TEXT, bold = true))
+            body.addView(Ui.text(this, "Settings", 26f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "PocketScreen $versionName", 13f, Ui.MUTED), top = 2)
             val scroll = ScrollView(this)
             scroll.isVerticalScrollBarEnabled = false
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
             scroll.addView(col)
-            Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
+            Ui.add(body, scroll, top = 8, h = 0, weight = 1f)
 
             fun section(title: String, rows: List<View>, note: String? = null) {
-                Ui.add(col, Ui.sectionLabel(this, title), top = 22)
+                Ui.add(col, Ui.sectionLabel(this, title), top = if (col.childCount == 0) 8 else 26)
                 val box = LinearLayout(this)
                 box.orientation = LinearLayout.VERTICAL
                 Ui.add(col, box, top = 8)
                 Ui.group(box, rows)
                 if (note != null) {
                     val n = Ui.text(this, note, 12f, Ui.MUTED)
+                    n.setLineSpacing(0f, 1.15f)
                     n.setPadding(dp(8), 0, dp(8), 0)
                     Ui.add(col, n, top = 8)
                 }
@@ -1381,22 +1434,19 @@ class MainActivity : Activity() {
                         startActivity(Intent.createChooser(i, "Share log"))
                     }
                 },
-                settingsRow("Clear log file", "Delete everything saved so far") {
+                settingsRow("Clear log file", "Delete everything saved so far", danger = true) {
                     Debug.clear(this)
                     Toast.makeText(this, "Log cleared", Toast.LENGTH_SHORT).show()
                 }
             ))
             showDbgRows(Debug.enabled(this))
-            val ver = Ui.text(this, "PocketScreen $versionName", 12f, Ui.MUTED)
-            ver.gravity = Gravity.CENTER
-            Ui.add(col, ver, top = 24)
+            Ui.add(col, View(this), top = 16, h = dp(1)) // bottom breathing room
         }
     }
 
     private fun confirmStopAll() {
         Ui.sheet(this) { body, dlg ->
-            body.addView(Ui.text(this, "Stop everything?", 22f, Ui.TEXT, bold = true))
-            Ui.add(body, Ui.text(this, "This closes every app on the hidden displays and destroys the displays.", 14f, Ui.MUTED), top = 4)
+            body.addView(Ui.sheetTitle(this, "Stop everything?", "This closes every app on the hidden displays and destroys the displays."))
             Ui.add(body, Ui.button(this, "Stop all", Ui.Kind.DANGER) {
                 dlg.dismiss()
                 bg { Vd.stopAll(applicationContext) }

@@ -151,28 +151,41 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Ui.BG)
 
-        val back = IconView(this, IconView.BACK)
+        fun barButton(ic: IconView): IconView {
+            val r = Ui.dpf(this, Ui.R_FIELD.toFloat() - 2f)
+            ic.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, r), r)
+            return ic
+        }
+        val back = barButton(IconView(this, IconView.BACK, 36))
         back.contentDescription = "Back to main menu"
         back.setOnClickListener { leave() }
-        bar.addView(back, LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)))
+        val bp = LinearLayout.LayoutParams(Ui.dp(this, 36), Ui.dp(this, 36))
+        bp.leftMargin = Ui.dp(this, 8)
+        bp.rightMargin = Ui.dp(this, 4)
+        bar.addView(back, bp)
 
         val titles = LinearLayout(this)
         titles.orientation = LinearLayout.VERTICAL
-        titleView = Ui.text(this, "Display #$displayId", 16f, Ui.TEXT, bold = true)
+        titleView = Ui.text(this, "Display #$displayId", 15f, Ui.TEXT, bold = true)
         titleView.isSingleLine = true
         titleView.ellipsize = TextUtils.TruncateAt.END
-        subView = Ui.text(this, "", 11.5f, Ui.MUTED)
+        subView = Ui.text(this, "", 12f, Ui.MUTED)
         subView.fontFeatureSettings = "tnum"
         subView.isSingleLine = true
         subView.ellipsize = TextUtils.TruncateAt.END
         titles.addView(titleView)
         titles.addView(subView)
-        bar.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        val tp = LinearLayout.LayoutParams(0, -2, 1f)
+        tp.leftMargin = Ui.dp(this, 6)
+        bar.addView(titles, tp)
 
-        kbIcon = IconView(this, IconView.KEYBOARD)
+        kbIcon = barButton(IconView(this, IconView.KEYBOARD, 36))
         kbIcon.contentDescription = "Toggle keyboard"
         kbIcon.setOnClickListener { toggleKeyboard() }
-        bar.addView(kbIcon, LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)))
+        val kp = LinearLayout.LayoutParams(Ui.dp(this, 36), Ui.dp(this, 36))
+        kp.leftMargin = Ui.dp(this, 4)
+        kp.rightMargin = Ui.dp(this, 8)
+        bar.addView(kbIcon, kp)
         root.addView(bar, LinearLayout.LayoutParams(-1, Ui.dp(this, 48)))
         // hairline between the bar and the display
         val rule = View(this)
