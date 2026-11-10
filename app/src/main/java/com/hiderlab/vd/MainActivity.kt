@@ -701,7 +701,7 @@ class MainActivity : Activity() {
 
     private fun moveToOwnDisplay(r: Row) {
         bg {
-            val id = Vd.createDisplay(applicationContext, r.display.landscape, Vd.appCfg(applicationContext, r.pkg), AppSettings.effectiveRefreshRate(applicationContext, r.pkg))
+            val id = Vd.createDisplay(applicationContext, r.display.landscape, Vd.appCfg(applicationContext, r.pkg), Vd.refreshFor(applicationContext, r.pkg))
             if (id >= 0) log("Move ${r.pkg} to #$id:\n" + Vd.exec("am display move-stack ${r.taskId} $id"))
             Thread.sleep(600)
             runOnUiThread { refresh() }
@@ -741,7 +741,7 @@ class MainActivity : Activity() {
                     return@bg
                 }
                 runOnUiThread { Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show() }
-                val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg), AppSettings.effectiveRefreshRate(applicationContext, pkg))
+                val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg), Vd.refreshFor(applicationContext, pkg))
                 if (id >= 0) {
                     log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
                     // Refresh twice so the app shows up as soon as it exists.

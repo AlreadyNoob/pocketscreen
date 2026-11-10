@@ -47,6 +47,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var edgeStartY = 0f
     private var edgeFromLeft = false
     private var pkgOnDisplay: String? = null
+    private var lastSub = ""
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
     private lateinit var subView: TextView
@@ -75,12 +76,14 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
                     rot = r
                     val base = (if (landscape) "Landscape" else "Portrait") + " · ${dw}×${dh}" +
                         (if (rot != 0) " · rotated ${rot * 90}°" else "")
-                    if (Vd.inputError.isEmpty()) {
-                        subView.setTextColor(Ui.MUTED)
-                        subView.text = base
-                    } else {
-                        subView.setTextColor(Ui.BAD)
-                        subView.text = "Input error: ${Vd.inputError}"
+                    // Only touch the view when something changed: re-setting the same text still
+                    // triggers a layout pass, which shows up as a hitch once a second.
+                    val err = Vd.inputError.isNotEmpty()
+                    val txt = if (err) "Input error: ${Vd.inputError}" else base
+                    if (txt != lastSub) {
+                        lastSub = txt
+                        subView.setTextColor(if (err) Ui.BAD else Ui.MUTED)
+                        subView.text = txt
                     }
                 }
             }.start()
@@ -451,6 +454,11 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             if (names.isNotEmpty()) ui.post { titleView.text = names.joinToString(", ") }
             // Keyboard and back-gesture choices can be set per app.
             if (pkg != null) ui.post { applyPerApp(pkg) }
+            if (pkg != null && Debug.enabled(this)) {
+                // top-app = all cores, foreground = fewer; useful when the app stutters
+                Debug.write("viewer: $pkg scheduling:\n" + Vd.exec(
+                    "for p in \$(pidof $pkg); do echo pid=\$p cpuset=\$(cat /proc/\$p/cpuset) oom_adj=\$(cat /proc/\$p/oom_score_adj); done"))
+            }
         }.start()
     }
 
@@ -515,8 +523,10 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
                 val same = disp.supportedModes.filter {
                     it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight
                 }
-                // The slowest mode that reaches the wanted rate, or the fastest there is.
-                val best = same.filter { it.refreshRate >= hz - 0.5f }.minByOrNull { it.refreshRate }
+                // The slowest mode that is an exact multiple of the wanted rate, else the slowest that reaches it.
+                val best = same.filter { Math.round(it.refreshRate) >= hz && Math.round(it.refreshRate) % hz == 0 }
+                    .minByOrNull { it.refreshRate }
+                    ?: same.filter { it.refreshRate >= hz - 0.5f }.minByOrNull { it.refreshRate }
                     ?: same.maxByOrNull { it.refreshRate }
                 if (best != null) {
                     val lp = window.attributes

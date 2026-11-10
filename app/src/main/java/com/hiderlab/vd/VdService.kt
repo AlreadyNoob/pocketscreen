@@ -190,6 +190,10 @@ class VdService : IVdService.Stub() {
         }
     }
 
+    private val setDisplayIdMethod: Method by lazy {
+        InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
+    }
+
     private fun inject(ev: InputEvent, displayId: Int) {
         try {
             if (injectMethod == null) {
@@ -201,7 +205,7 @@ class VdService : IVdService.Stub() {
                 injectMethod = iface.methods.firstOrNull { it.name == "injectInputEvent" && it.parameterCount in 2..3 }
                     ?: error("injectInputEvent not found")
             }
-            InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType).invoke(ev, displayId)
+            setDisplayIdMethod.invoke(ev, displayId)
             val m = injectMethod!!
             if (m.parameterCount == 2) m.invoke(inputIface, ev, 0) else m.invoke(inputIface, ev, 0, -1)
         } catch (t: Throwable) {

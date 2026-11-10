@@ -337,6 +337,34 @@ object Vd {
         return if (landscape) Triple(h, w, dpi) else Triple(w, h, dpi)
     }
 
+    /**
+     * The rate a new display should really get for a wanted [hz]. The display is paced by the phone's
+     * screen, so a rate that isn't a divisor of one of the screen's modes judders (75 Hz on a
+     * 60/90/120 screen, or anything above the maximum). Those are moved to the nearest mode that
+     * works; 0 (Auto) stays 0.
+     */
+    fun snapRate(ctx: Context, hz: Int): Int {
+        if (hz <= 0) return 0
+        return try {
+            val dm = ctx.getSystemService(android.hardware.display.DisplayManager::class.java)
+            val d = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val cur = d.mode
+            val rates = d.supportedModes
+                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+                .map { Math.round(it.refreshRate) }.distinct().sorted()
+            val out = when {
+                rates.isEmpty() -> hz
+                rates.any { it % hz == 0 } -> hz
+                else -> rates.firstOrNull { it >= hz } ?: rates.last()
+            }
+            if (out != hz) log("Refresh rate $hz Hz -> $out Hz (screen modes: ${rates.joinToString()} Hz)")
+            out
+        } catch (_: Throwable) { hz }
+    }
+
+    /** The rate [pkg] gets on its next display, already adjusted for the screen. */
+    fun refreshFor(ctx: Context, pkg: String): Int = snapRate(ctx, AppSettings.effectiveRefreshRate(ctx, pkg))
+
     /** Creates a display and returns its id, or -1 on failure. */
     fun createDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
         val s = service ?: run { log("Not connected"); return -1 }
