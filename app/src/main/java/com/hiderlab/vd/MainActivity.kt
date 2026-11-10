@@ -731,7 +731,7 @@ class MainActivity : Activity() {
                 // Already running on a hidden display: say so and don't start anything.
                 if (Vd.displayOf(pkg) != null) {
                     runOnUiThread {
-                        Toast.makeText(this, "${Apps.label(this, pkg)} is already running. Open it from Running now.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "${Apps.label(this, pkg)} is already running", Toast.LENGTH_SHORT).show()
                     }
                     return@bg
                 }
@@ -1150,7 +1150,7 @@ class MainActivity : Activity() {
             section("Viewer", listOf(
                 settingsTri("Suppress keyboard requests", "Keyboard only opens from the keyboard icon.",
                     AppSettings.appSuppressKeyboard(this, pkg), AppSettings.suppressKeyboard(this)) { AppSettings.setAppSuppressKeyboard(this, pkg, it) },
-                settingsTri("Back gesture controls the app", "Edge swipes go back inside the app.",
+                settingsTri("Back gesture controls the app", "Back inside the viewer goes back inside the app.",
                     AppSettings.appBackGesture(this, pkg), AppSettings.backGesture(this)) { AppSettings.setAppBackGesture(this, pkg, it) }
             ), "Take effect the next time you open the viewer.")
         }

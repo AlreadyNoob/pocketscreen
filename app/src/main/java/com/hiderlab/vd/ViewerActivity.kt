@@ -30,7 +30,8 @@ import android.window.OnBackInvokedDispatcher
 /**
  * Live view of one hidden display (pass its id as the "display" extra). Touches go to the
  * display, the phone's keyboard (or a physical one) types straight into the focused app.
- * Back gestures go to the app (or are ignored, per Settings); the arrow in the top bar is the way out.
+ * Back (keys, or the system's back once the bars are showing) goes to the app or is ignored, per Settings;
+ * the arrow in the top bar is the way out.
  */
 class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
@@ -38,11 +39,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var suppressKb = false
     private var backControls = true
     private var lastBack = 0L
-    // Back swipes from the screen edges are handled here, not by the system (see dispatchTouchEvent).
-    private var edgeDown = false
-    private var edgeFired = false
-    private var edgeStartX = 0f
-    private var edgeFromLeft = false
     private var barsShown = false
     private var pkgOnDisplay: String? = null
     private lateinit var box: FrameLayout
@@ -179,7 +175,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
         // The exclusion goes on the full-width box, so it covers the real screen edges even when the
         // display is letterboxed inside it.
-        box.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> fit(); updatePan(); updateGestureExclusion(v) }
+        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(); updatePan() }
+        window.decorView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGestureExclusion() }
 
         sv.holder.setFixedSize(dw, dh)
         sv.holder.addCallback(this)
@@ -312,36 +309,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         } catch (_: Throwable) {}
     }
 
-    /**
-     * Back from a swipe off the left or right screen edge. Handling it here means the system's own
-     * back gesture never starts, and with it the transient system bars it brings along.
-     */
-    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
-        if (backControls && e.pointerCount == 1) {
-            val w = resources.displayMetrics.widthPixels
-            val edge = Ui.dp(this, 28)
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> if (e.rawX <= edge || e.rawX >= w - edge) {
-                    edgeDown = true
-                    edgeFired = false
-                    edgeStartX = e.rawX
-                    edgeFromLeft = e.rawX <= edge
-                    return true
-                }
-                MotionEvent.ACTION_MOVE -> if (edgeDown) {
-                    val dx = if (edgeFromLeft) e.rawX - edgeStartX else edgeStartX - e.rawX
-                    if (!edgeFired && dx > Ui.dp(this, 40)) { edgeFired = true; sendBack() }
-                    return true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (edgeDown) {
-                    edgeDown = false
-                    return true
-                }
-            }
-        }
-        return super.dispatchTouchEvent(e)
-    }
-
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) sendBack()
@@ -389,20 +356,22 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         if (Build.VERSION.SDK_INT >= 30) window.insetsController?.hide(WindowInsets.Type.ime())
     }
 
-    /** Asks Android not to start the system back gesture from the display's left and right edges. */
-    private fun updateGestureExclusion(v: View) {
+    /**
+     * Excludes the full height of both side edges of the window from the system gestures. While the
+     * system bars are hidden (sticky immersive) Android lifts its usual 200dp-per-edge cap, so the
+     * system back swipe never starts here and has nothing to reveal the bars with. The bottom home
+     * zone cannot be excluded; swiping up from it is the one way to bring the bars back.
+     */
+    private fun updateGestureExclusion() {
         if (Build.VERSION.SDK_INT < 29) return
+        val v = window.decorView
         val w = v.width
         val h = v.height
         if (w <= 0 || h <= 0) return
-        // The system never gets the edge swipes here. With back on, dispatchTouchEvent turns them into
-        // Back itself; with back off they do nothing. Either way Android has no swipe to react to.
-        val edge = Ui.dp(this, 36)
-        val strip = minOf(h, Ui.dp(this, 200))
-        val top = (h - strip) / 2
+        val edge = Ui.dp(this, 48)
         v.systemGestureExclusionRects = listOf(
-            Rect(0, top, edge, top + strip),
-            Rect(w - edge, top, w, top + strip)
+            Rect(0, 0, edge, h),
+            Rect(w - edge, 0, w, h)
         )
     }
 
@@ -439,7 +408,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         suppressKb = AppSettings.effectiveSuppressKeyboard(this, pkg)
         if (::sv.isInitialized) {
             sv.editorAllowed = !suppressKb || kbVisible
-            updateGestureExclusion(box)
         }
     }
 
