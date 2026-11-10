@@ -474,6 +474,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        // Without this the phone's screen can drop to a lower rate while it shows the viewer, which
+        // would hide the display's higher refresh rate.
+        val hz = Vd.display(displayId)?.fps ?: 0
+        if (Build.VERSION.SDK_INT >= 30) {
+            try { holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT) } catch (_: Throwable) {}
+        }
         try {
             val r = Vd.service?.setSurface(displayId, holder.surface)
             if (r != null && r != "OK") {

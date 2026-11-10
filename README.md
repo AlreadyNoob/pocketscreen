@@ -30,6 +30,7 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 - **One app per hidden display**, with orientation and size you choose.
 - **Quick launch:** save an app with its orientation and size, then start it with one tap.
 - **Per-app size:** a custom resolution and DPI for one app. Settings holds the default for everything else.
+- **Refresh rate:** Auto (the phone's own rate), 30/60/90/120/144 Hz or any custom value, per app with a default in Settings. Needs Android 14+; Android rounds it to a rate the screen can show, so it can't exceed the phone's own maximum. Applies at launch.
 - **Mute per app** (the app is unmuted on every launch; mute it again from its menu).
 - **Auto-stop** per app, with defaults in Settings: stop at a battery level (when not charging) and/or after running for a set time. Presets or any custom value. Stopping an app also removes its display.
 - **Close display, keep app:** removes the app's display without stopping the app. See the Recents note below.

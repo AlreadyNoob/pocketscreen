@@ -701,7 +701,7 @@ class MainActivity : Activity() {
 
     private fun moveToOwnDisplay(r: Row) {
         bg {
-            val id = Vd.createDisplay(applicationContext, r.display.landscape, Vd.appCfg(applicationContext, r.pkg))
+            val id = Vd.createDisplay(applicationContext, r.display.landscape, Vd.appCfg(applicationContext, r.pkg), AppSettings.effectiveRefreshRate(applicationContext, r.pkg))
             if (id >= 0) log("Move ${r.pkg} to #$id:\n" + Vd.exec("am display move-stack ${r.taskId} $id"))
             Thread.sleep(600)
             runOnUiThread { refresh() }
@@ -741,7 +741,7 @@ class MainActivity : Activity() {
                     return@bg
                 }
                 runOnUiThread { Toast.makeText(this, "Launching ${Apps.label(this, pkg)}…", Toast.LENGTH_SHORT).show() }
-                val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg))
+                val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg), AppSettings.effectiveRefreshRate(applicationContext, pkg))
                 if (id >= 0) {
                     log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
                     // Refresh twice so the app shows up as soon as it exists.
@@ -1071,6 +1071,74 @@ class MainActivity : Activity() {
         return row
     }
 
+    private fun hzLabel(v: Int, defaultValue: Int?): String = when {
+        v < 0 -> "Default (${hzLabel(defaultValue ?: 0, null)})"
+        v == 0 -> "Auto"
+        else -> "$v Hz"
+    }
+
+    /**
+     * A row for the display refresh rate: Auto (the phone's own rate), presets, or a custom number up
+     * to 144. [defaultValue] non-null means a per-app row that can fall back to the Settings value.
+     */
+    private fun settingsRefresh(current: Int, defaultValue: Int?, onChange: (Int) -> Unit): View {
+        val title = "Refresh rate"
+        var value = current
+        val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
+        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        fun style() {
+            val shown = if (value < 0) (defaultValue ?: 0) else value
+            pill.text = if (value < 0) hzLabel(shown, null) else hzLabel(value, null)
+            pill.setTextColor(if (shown > 0) Ui.ON_ACCENT_CONT else Ui.MUTED)
+            pill.background = Ui.shape(if (shown > 0) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 16f))
+        }
+        style()
+        val row = settingRowBase(title, null, pill)
+        row.setOnClickListener {
+            Ui.sheet(this, 0.85f) { body, dlg ->
+                body.addView(Ui.text(this, title, 22f, Ui.TEXT, bold = true))
+                Ui.add(body, Ui.text(this, "Applies the next time the app is launched. Android rounds it to a rate your screen can show, so it can't go above the phone's own maximum.", 13f, Ui.MUTED), top = 2)
+                val scroll = ScrollView(this)
+                scroll.isVerticalScrollBarEnabled = false
+                val col = LinearLayout(this)
+                col.orientation = LinearLayout.VERTICAL
+                scroll.addView(col)
+                Ui.add(body, scroll, top = 4, h = 0, weight = 1f)
+
+                fun pick(v: Int) { value = v; style(); onChange(v); dlg.dismiss() }
+                val presets = listOf(30, 60, 90, 120, 144)
+                val opts = ArrayList<Pair<String, Int>>()
+                if (defaultValue != null) opts.add(hzLabel(-1, defaultValue) to -1)
+                // With a default of Auto, a separate "Auto" would just repeat it.
+                if (defaultValue == null || defaultValue != 0) opts.add("Auto" to 0)
+                for (c in presets) opts.add("$c Hz" to c)
+                val cur = if (defaultValue == 0 && value == 0) -1 else value
+                Ui.group(col, opts.map { (label, v) -> optionRow(label, cur == v) { pick(v) } }, top = 14)
+
+                Ui.add(col, Ui.text(this, "Custom rate (Hz, 1–${AppSettings.MAX_HZ})", 13f, Ui.MUTED), top = 22)
+                val e = EditText(this)
+                e.filters = arrayOf(InputFilter { src, st, en, dest, ds, de ->
+                    val next = dest.toString().substring(0, ds) + src.subSequence(st, en) + dest.toString().substring(de)
+                    if (next.isEmpty()) null
+                    else if (next.length > 3 || (next.toIntOrNull() ?: Int.MAX_VALUE) > AppSettings.MAX_HZ) "" else null
+                })
+                e.hint = "e.g. 75"
+                e.inputType = InputType.TYPE_CLASS_NUMBER
+                e.isSingleLine = true
+                Ui.styleInput(this, e)
+                if (value > 0 && value !in presets) e.setText(value.toString())
+                Ui.add(col, e, top = 6)
+                Ui.add(col, Ui.button(this, "Set custom value", Ui.Kind.FILLED) {
+                    val v = e.text.toString().toIntOrNull()
+                    if (v == null || v < 1 || v > AppSettings.MAX_HZ) {
+                        Toast.makeText(this, "Enter 1–${AppSettings.MAX_HZ}", Toast.LENGTH_SHORT).show()
+                    } else pick(v)
+                }, top = 12)
+            }
+        }
+        return row
+    }
+
     /**
      * A per-app switch that normally follows Settings. [current] is -1 (follow Settings), 0 or 1.
      * The list offers only two choices: follow Settings (shown with its value) or the opposite.
@@ -1139,7 +1207,8 @@ class MainActivity : Activity() {
                         onSave = { Vd.setAppCfg(this, pkg, it) },
                         onReset = { Vd.setAppCfg(this, pkg, null) }
                     )
-                }
+                },
+                settingsRefresh(AppSettings.appRefreshRate(this, pkg), AppSettings.refreshRate(this)) { AppSettings.setAppRefreshRate(this, pkg, it) }
             ), "Applies the next time the app is launched.")
 
             section("Auto-stop", listOf(
@@ -1184,6 +1253,7 @@ class MainActivity : Activity() {
                 settingsRow("Display size", "Portrait ${p.first}×${p.second} · ${p.third} dpi") {
                     dlg.dismiss(); showDisplaySettings()
                 },
+                settingsRefresh(AppSettings.refreshRate(this), null) { AppSettings.setRefreshRate(this, it) },
                 settingsRow("Restore sound", "Give sound back to all muted apps") {
                     bg { log(Vd.restoreAllAudio(applicationContext)) }
                     Toast.makeText(this, "Sound restored", Toast.LENGTH_SHORT).show()

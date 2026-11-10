@@ -52,4 +52,14 @@ object AppSettings {
 
     fun effectiveBattery(c: Context, pkg: String): Int = appBattery(c, pkg).let { if (it < 0) autoStopBattery(c) else it }
     fun effectiveMinutes(c: Context, pkg: String): Int = appMinutes(c, pkg).let { if (it < 0) autoStopMinutes(c) else it }
+
+    /** Refresh rate of new hidden displays, in Hz. 0 = the phone's own rate. */
+    const val MAX_HZ = 144
+    fun refreshRate(c: Context): Int = p(c).getInt("refresh_hz", 0)
+    fun setRefreshRate(c: Context, v: Int) { p(c).edit().putInt("refresh_hz", v).apply() }
+    /** Per-app rate. -1 = use the Settings value, 0 = the phone's own rate. */
+    fun appRefreshRate(c: Context, pkg: String): Int = p(c).getInt("hz_$pkg", -1)
+    fun setAppRefreshRate(c: Context, pkg: String, v: Int) { p(c).edit().putInt("hz_$pkg", v).apply() }
+    fun effectiveRefreshRate(c: Context, pkg: String): Int =
+        appRefreshRate(c, pkg).let { if (it < 0) refreshRate(c) else it }.coerceIn(0, MAX_HZ)
 }

@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** App-side connection to the Shizuku service. Shared by the UI, viewer and notification. */
 object Vd {
-    data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0) {
+    data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0, val fps: Int = 0) {
         val landscape: Boolean get() = w > h
         val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
     }
@@ -74,7 +74,8 @@ object Vd {
                 if (p.size >= 3) {
                     val id = p[0].toIntOrNull(); val w = p[1].toIntOrNull(); val h = p[2].toIntOrNull()
                     val dpi = p.getOrNull(3)?.toIntOrNull() ?: 0
-                    if (id != null && w != null && h != null) Disp(id, w, h, dpi) else null
+                    val fps = p.getOrNull(4)?.toIntOrNull() ?: 0
+                    if (id != null && w != null && h != null) Disp(id, w, h, dpi, fps) else null
                 } else null
             }
             inputError = parts.getOrElse(1) { "" }
@@ -337,10 +338,10 @@ object Vd {
     }
 
     /** Creates a display and returns its id, or -1 on failure. */
-    fun createDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null): Int {
+    fun createDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
         val s = service ?: run { log("Not connected"); return -1 }
         val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
-        val r = try { s.createDisplay(w, h, dpi) } catch (t: Throwable) { "ERR: $t" }
+        val r = try { s.createDisplay(w, h, dpi, fps) } catch (t: Throwable) { "ERR: $t" }
         log("createDisplay: $r")
         var id = -1
         if (r.startsWith("OK:")) {
@@ -362,11 +363,11 @@ object Vd {
      * second app on the same display would freeze the first. An empty display of the right
      * size is reused; otherwise a new one is created. Returns its id, or -1.
      */
-    fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null): Int {
-        // Only reuse a display that already has exactly the size a new one would get now.
+    fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
+        // Only reuse a display that already has exactly the size and refresh rate a new one would get now.
         val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
-        return displays.firstOrNull { it.w == w && it.h == h && (it.dpi == 0 || it.dpi == dpi) && tasks(it.id).isEmpty() }?.id
-            ?: createDisplay(ctx, landscape, cfg)
+        return displays.firstOrNull { it.w == w && it.h == h && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
+            ?: createDisplay(ctx, landscape, cfg, fps)
     }
 
     fun launch(ctx: Context, pkg: String, display: Int): String {

@@ -33,6 +33,7 @@ class VdService : IVdService.Stub() {
         val w: Int,
         val h: Int,
         val dpi: Int,
+        val fps: Int,
         val reader: ImageReader,
         val thread: HandlerThread,
         val dm: Any,
@@ -73,15 +74,15 @@ class VdService : IVdService.Stub() {
         exitProcess(0)
     }
 
-    override fun createDisplay(w: Int, h: Int, dpi: Int): String {
+    override fun createDisplay(w: Int, h: Int, dpi: Int, fps: Int): String {
         val errors = StringBuilder()
         for (flags in intArrayOf(FULL, MID, BASE)) {
             try {
-                val vd = create(w, h, dpi, flags)
+                val vd = create(w, h, dpi, fps, flags)
                 displays[vd.id] = vd
                 // Let non-resizable apps open on a secondary display.
                 run("settings put global force_resizable_activities 1")
-                return "OK:${vd.id} (flags=$flags)"
+                return "OK:${vd.id} (flags=$flags, fps=${if (fps > 0) fps.toString() else "auto"}${if (fps > 0 && !rateApplied) " NOT APPLIED" else ""})"
             } catch (t: Throwable) {
                 errors.append("flags=").append(flags).append(": ")
                     .append(Log.getStackTraceString(unwrap(t)).take(900)).append('\n')
@@ -100,7 +101,7 @@ class VdService : IVdService.Stub() {
     override fun exec(cmd: String): String = run(cmd)
 
     override fun info(): String =
-        displays.values.sortedBy { it.id }.joinToString(";") { "${it.id},${it.w},${it.h},${it.dpi}" } + "#" + lastError
+        displays.values.sortedBy { it.id }.joinToString(";") { "${it.id},${it.w},${it.h},${it.dpi},${it.fps}" } + "#" + lastError
 
     override fun setSurface(id: Int, s: Surface): String = try {
         swapSurface(id, s); "OK"
@@ -239,7 +240,9 @@ class VdService : IVdService.Stub() {
 
     // ---- display creation ----
 
-    private fun create(w: Int, h: Int, dpi: Int, flags: Int): VD {
+    @Volatile private var rateApplied = false
+
+    private fun create(w: Int, h: Int, dpi: Int, fps: Int, flags: Int): VD {
         val thread = HandlerThread("vd-reader").also { it.start() }
         val reader = try {
             ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
@@ -265,6 +268,18 @@ class VdService : IVdService.Stub() {
                 .newInstance("HiderLab", w, h, dpi)
             bClass.getMethod("setFlags", intT).invoke(builder, flags)
             bClass.getMethod("setSurface", Surface::class.java).invoke(builder, surface)
+            // Refresh rate of the display itself (Android 14+). Android rounds it to a divisor of the
+            // phone's own rate; 0 leaves it at the phone's rate.
+            rateApplied = false
+            if (fps > 0) {
+                try {
+                    bClass.getMethod("setRequestedRefreshRate", Float::class.javaPrimitiveType)
+                        .invoke(builder, fps.toFloat())
+                    rateApplied = true
+                } catch (t: Throwable) {
+                    Log.w("VdService", "setRequestedRefreshRate unavailable: $t")
+                }
+            }
             val config = bClass.getMethod("build").invoke(builder)
 
             val cbIface = Class.forName("android.hardware.display.IVirtualDisplayCallback")
@@ -287,7 +302,7 @@ class VdService : IVdService.Stub() {
             if (m.parameterCount != 4) error("Unexpected signature: $m")
             val id = m.invoke(dmI, config, cbProxy, null, "com.android.shell") as Int
             if (id < 0) error("createVirtualDisplay returned $id")
-            return VD(id, w, h, dpi, reader, thread, dmI, cbProxy)
+            return VD(id, w, h, dpi, fps, reader, thread, dmI, cbProxy)
         } catch (e: Throwable) {
             try { reader.close() } catch (_: Throwable) {}
             thread.quitSafely()

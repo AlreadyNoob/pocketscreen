@@ -4,8 +4,8 @@ import android.view.Surface;
 
 interface IVdService {
     void destroy() = 16777114;
-    // "OK:<id> (flags=..)" or "ERR:..."
-    String createDisplay(int w, int h, int dpi) = 1;
+    // "OK:<id> (flags=..)" or "ERR:..."; fps 0 = the phone's own refresh rate
+    String createDisplay(int w, int h, int dpi, int fps) = 1;
     String releaseDisplay(int id) = 2;
     String exec(String cmd) = 3;
     // "id,w,h;id,w,h#lastInputError"
