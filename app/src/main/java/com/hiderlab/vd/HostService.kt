@@ -88,15 +88,19 @@ class HostService : Service() {
         Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct()
 
     private fun statusText(apps: List<String>): String = when (apps.size) {
-        0 -> "Hidden display is ready"
+        0 -> "No apps running"
         1 -> "1 app running in the background"
         else -> "${apps.size} apps running in the background"
     }
 
     /** Rebuilds the ongoing notification when the set of running apps has changed. */
     private fun refreshNotification() {
-        if (!watching || Vd.service == null) return
-        val apps = try { runningApps() } catch (_: Throwable) { return }
+        if (!watching) return
+        // Read the live display list first: the cached one can still hold a display that was just
+        // removed, and while the service is unreachable nothing counts as running.
+        val apps = try {
+            if (Vd.service == null) emptyList() else { Vd.refreshInfo(); runningApps() }
+        } catch (_: Throwable) { return }
         val sig = apps.sorted().toString()
         if (sig == lastSig) return
         lastSig = sig

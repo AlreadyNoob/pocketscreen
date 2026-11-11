@@ -36,12 +36,15 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 - **Stats:** approximate memory (PSS) and CPU share per app. CPU is an average over the last few minutes, as a share of the whole CPU.
 - **Cleanup:** displays with nothing on them are removed automatically after about 30 seconds.
 - **Viewer options:** the back gesture can control the app or be ignored, and the keyboard can be kept from popping up unless you ask for it.
+- **Updates:** Settings → Updates checks GitHub for a newer release (also automatically, at most twice a day; can be turned off). It opens the release page, nothing installs by itself.
 - **Look:** Material-style light and dark themes that follow the system, plus wallpaper colors on Android 12 and newer.
 - **Debug log:** off by default, writes to a file only, and can be shared from Settings.
 
 ### Recents
 
 By default apps are launched with the "exclude from Recents" flag so hidden apps do not clutter Recents. Turn off **Hide apps from Recents** in Settings if you would rather see them there.
+
+The changes in each version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## How it works
 
@@ -60,7 +63,7 @@ gradle assembleDebug     # Gradle 8.10+, JDK 17
 
 The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
-GitHub Actions (`.github/workflows/build.yml`) builds on every push and pull request, uploads the APK as a workflow artifact, and on pushes to `main` publishes a release named `v<appVersion>.<run number>`. The version base is `appVersion` in `gradle.properties`. The version code is the run number.
+GitHub Actions (`.github/workflows/build.yml`) builds on every push and pull request, uploads the APK as a workflow artifact, and on pushes to `main` publishes a release named `v<appVersion>.<run number>`, with the matching section of `CHANGELOG.md` as its notes. Add a section to the changelog when you raise `appVersion`. The version base is `appVersion` in `gradle.properties`. The version code is the run number.
 
 The debug build is signed with `app/hiderlab.jks`, a key that is committed to the repository on purpose so that builds keep the same signature. It is not a secret and not a release-grade key.
 
@@ -74,6 +77,7 @@ The debug build is signed with `app/hiderlab.jks`, a key that is committed to th
 | `VdService.kt`, `IVdService.aidl` | The service that runs through Shizuku |
 | `HostService.kt` | Foreground notification and the auto-stop checks |
 | `AppSettings.kt`, `Debug.kt`, `Apps.kt` | Preferences, debug log, installed-app list and icons |
+| `Updater.kt` | Update check against GitHub releases |
 | `Ui.kt` | Small UI toolkit: theme, buttons, lists, sheets, icons |
 
 ## Limitations

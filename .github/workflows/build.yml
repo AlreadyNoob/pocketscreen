@@ -58,6 +58,15 @@ jobs:
           path: ${{ steps.apk.outputs.file }}
           if-no-files-found: error
 
+      - name: Release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          BASE="$(grep '^appVersion=' gradle.properties | cut -d= -f2)"
+          # The CHANGELOG.md section for this version becomes the release notes.
+          awk -v v="$BASE" '/^## /{p=($2==v)} p' CHANGELOG.md | tail -n +2 > notes.md
+          [ -s notes.md ] || echo "Debug APK. See the README for setup." > notes.md
+
       - name: Publish release
         if: github.event_name != 'pull_request'
         env:
@@ -68,5 +77,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "PocketScreen ${{ steps.apk.outputs.version }}" \
-            --generate-notes \
-            --notes "Debug APK. Install it, then start Shizuku and open the app. See the README for setup."
+            --notes-file notes.md

@@ -204,6 +204,36 @@ class MainActivity : Activity() {
         refresh()
         tickHandler.removeCallbacks(tick)
         tickHandler.postDelayed(tick, 30_000)
+        Updater.autoCheck(applicationContext) { r -> runOnUiThread { if (!isFinishing) showUpdate(r) } }
+    }
+
+    private fun showUpdate(r: Updater.Release) {
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, "Update available", 22f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "PocketScreen ${r.version} is out. You have $versionName.", 14f, Ui.MUTED), top = 4)
+            val notes = r.notes.trim().lines().filter { it.isNotBlank() }.take(12).joinToString("\n")
+            if (notes.isNotEmpty()) Ui.add(body, Ui.text(this, notes, 13f, Ui.TEXT), top = 12)
+            Ui.add(body, Ui.button(this, "Download", Ui.Kind.FILLED) {
+                dlg.dismiss()
+                try { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(r.page))) }
+                catch (_: Throwable) { Toast.makeText(this, "No browser found", Toast.LENGTH_SHORT).show() }
+            }, top = 16)
+            Ui.add(body, Ui.button(this, "Later", Ui.Kind.TEXT) { dlg.dismiss() }, top = 4)
+        }
+    }
+
+    private fun checkUpdatesNow() {
+        Toast.makeText(this, "Checking for updates…", Toast.LENGTH_SHORT).show()
+        bg {
+            val r = Updater.check(applicationContext)
+            runOnUiThread {
+                when (r) {
+                    is Updater.Result.Newer -> showUpdate(r.release)
+                    is Updater.Result.UpToDate -> Toast.makeText(this, "You're up to date", Toast.LENGTH_SHORT).show()
+                    is Updater.Result.Failed -> Toast.makeText(this, "Couldn't check: ${r.why}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     // Keeps running time and time left fresh while the screen is open.
@@ -780,9 +810,14 @@ class MainActivity : Activity() {
         bg {
             try {
                 // Already running on a hidden display: say so and don't start anything.
-                if (Vd.displayOf(pkg) != null) {
+                val runningOn = Vd.displayOf(pkg)
+                if (runningOn != null) {
+                    // Size and refresh rate only apply when a display is created. If those settings have
+                    // changed since this one was, offer a relaunch; otherwise there is nothing to apply.
+                    val changes = changedSettings(pkg, landscape, Vd.display(runningOn))
                     runOnUiThread {
-                        Toast.makeText(this, "${Apps.label(this, pkg)} is already running", Toast.LENGTH_SHORT).show()
+                        if (changes.isEmpty()) Toast.makeText(this, "${Apps.label(this, pkg)} is already running", Toast.LENGTH_SHORT).show()
+                        else confirmRelaunch(pkg, landscape, changes)
                     }
                     return@bg
                 }
@@ -1347,6 +1382,12 @@ class MainActivity : Activity() {
                     AppSettings.setSuppressKeyboard(this, it)
                 }
             ))
+            section("Updates", listOf(
+                settingsRow("Check for updates", "You have $versionName") { checkUpdatesNow() },
+                settingsToggle("Check automatically", "Looks for a new release on GitHub at most twice a day.", Updater.autoEnabled(this)) {
+                    Updater.setAutoEnabled(this, it)
+                }
+            ))
             if (Build.VERSION.SDK_INT >= 31) {
                 section("Appearance", listOf(
                     settingsToggle("Use system colors", "Follow your wallpaper colors. Light and dark follow the system.", AppSettings.dynamicColor(this)) {
@@ -1389,6 +1430,34 @@ class MainActivity : Activity() {
             val ver = Ui.text(this, "PocketScreen $versionName", 12f, Ui.MUTED)
             ver.gravity = Gravity.CENTER
             Ui.add(col, ver, top = 24)
+        }
+    }
+
+    /** What a new launch of [pkg] would get that the running display doesn't have. Empty = nothing differs. */
+    private fun changedSettings(pkg: String, landscape: Boolean, d: Vd.Disp?): List<String> {
+        if (d == null) return emptyList()
+        val out = ArrayList<String>()
+        val (w, h, dpi) = Vd.sizeFor(this, d.landscape, Vd.appCfg(this, pkg))
+        if (d.w != w || d.h != h || (d.dpi > 0 && d.dpi != dpi)) out.add("size")
+        if (d.fps != Vd.refreshFor(this, pkg)) out.add("refresh rate")
+        if (d.landscape != landscape) out.add("orientation")
+        return out
+    }
+
+    private fun confirmRelaunch(pkg: String, landscape: Boolean, changes: List<String>) {
+        val name = Apps.label(this, pkg)
+        Ui.sheet(this) { body, dlg ->
+            body.addView(Ui.text(this, "Relaunch $name?", 22f, Ui.TEXT, bold = true))
+            Ui.add(body, Ui.text(this, "$name is already running, but its ${changes.joinToString(" and ")} " +
+                "changed since it started. Relaunching closes the app and starts it again with the new settings.", 14f, Ui.MUTED), top = 4)
+            Ui.add(body, Ui.button(this, "Relaunch", Ui.Kind.DANGER) {
+                dlg.dismiss()
+                bg {
+                    Vd.stopAppAndDisplay(applicationContext, pkg)
+                    runOnUiThread { launchApp(pkg, landscape) }
+                }
+            }, top = 16)
+            Ui.add(body, Ui.button(this, "Keep running", Ui.Kind.TEXT) { dlg.dismiss() }, top = 4)
         }
     }
 
