@@ -399,15 +399,16 @@ class MainActivity : Activity() {
     private var lastRows: List<Row> = emptyList()
     private var lastDisp: List<Vd.Disp> = emptyList()
     private var lastCrashes: List<Vd.Crash> = emptyList()
+    private var lastStops: List<Vd.AutoStop> = emptyList()
 
     private fun hidePkg(pkg: String) { hidingPkgs[pkg] = System.currentTimeMillis(); rerender() }
     private fun hideDisplay(id: Int) { hidingDisplays[id] = System.currentTimeMillis(); rerender() }
-    private fun rerender() = renderTasks(lastRows, lastDisp, statsCache, lastCrashes)
+    private fun rerender() = renderTasks(lastRows, lastDisp, statsCache, lastCrashes, lastStops)
 
     private fun refreshTasks() {
         val disp = Vd.displays
         if (Vd.service == null) {
-            lastRows = emptyList(); lastDisp = emptyList(); lastCrashes = Vd.crashes(this)
+            lastRows = emptyList(); lastDisp = emptyList(); lastCrashes = Vd.crashes(this); lastStops = Vd.autoStops(this)
             rerender()
             return
         }
@@ -418,6 +419,7 @@ class MainActivity : Activity() {
                 HostService.notifyCrash(applicationContext, c)
             }
             val crashes = Vd.crashes(applicationContext)
+            val stops = Vd.autoStops(applicationContext)
             // Auto-clean displays that have had nothing on them for a while.
             val now = System.currentTimeMillis()
             var cleaned = false
@@ -433,7 +435,7 @@ class MainActivity : Activity() {
             }
             // Show the rows right away with the last known numbers; the slow memory/CPU readout follows.
             runOnUiThread {
-                lastRows = rows; lastDisp = disp; lastCrashes = crashes
+                lastRows = rows; lastDisp = disp; lastCrashes = crashes; lastStops = stops
                 rerender()
                 if (cleaned) refresh()
             }
@@ -450,6 +452,55 @@ class MainActivity : Activity() {
         lastCrashes = lastCrashes.filter { it.pkg != c.pkg }
         launchApp(c.pkg, c.landscape)
         rerender()
+    }
+
+    private fun relaunchStopped(a: Vd.AutoStop) {
+        Vd.clearAutoStop(this, a.pkg)
+        lastStops = lastStops.filter { it.pkg != a.pkg }
+        launchApp(a.pkg, a.landscape)
+        rerender()
+    }
+
+    /** "3:42 AM", or "Nov 11, 3:42 AM" when it wasn't today. */
+    private fun stopTime(whenMs: Long): String {
+        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+        val clock = android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(whenMs))
+        return if (today.format(java.util.Date(whenMs)) == today.format(java.util.Date())) clock
+        else java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(java.util.Date(whenMs)) + ", " + clock
+    }
+
+    /** An app an auto-stop limit closed. It stays until dismissed or relaunched. */
+    private fun autoStopRow(a: Vd.AutoStop): View {
+        val row = listRow()
+        row.setOnClickListener { relaunchStopped(a) }
+        row.addView(appIcon(a.pkg), LinearLayout.LayoutParams(dp(46), dp(46)))
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        val name = Ui.text(this, Apps.label(this, a.pkg), 16f, Ui.TEXT, bold = true)
+        name.isSingleLine = true
+        name.ellipsize = TextUtils.TruncateAt.END
+        col.addView(name)
+        col.addView(Ui.text(this, "Auto-stopped · ${a.kind}", 13f, Ui.WARN))
+        if (a.detail.isNotBlank()) col.addView(Ui.text(this, a.detail, 12f, Ui.MUTED))
+        col.addView(Ui.text(this, "Ran for ${Vd.fmtMinutes(a.ranMin)} · Stopped at ${stopTime(a.whenMs)}", 12f, Ui.MUTED))
+        val btn = Ui.text(this, "Relaunch", 13f, Ui.ON_ACCENT_CONT, bold = true)
+        btn.setPadding(dp(14), dp(7), dp(14), dp(7))
+        btn.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 18f))
+        btn.setOnClickListener { relaunchStopped(a) }
+        Ui.add(col, btn, top = 8, w = ViewGroup.LayoutParams.WRAP_CONTENT)
+        val cp = LinearLayout.LayoutParams(0, -2, 1f)
+        cp.leftMargin = dp(14)
+        row.addView(col, cp)
+        val more = IconView(this, IconView.MORE)
+        more.tint = Ui.MUTED
+        more.setOnClickListener {
+            Ui.menu(this, more, listOf(
+                Ui.MenuItem("Relaunch") { relaunchStopped(a) },
+                Ui.MenuItem("Dismiss") { Vd.clearAutoStop(this, a.pkg); lastStops = Vd.autoStops(this); rerender() }
+            ))
+        }
+        row.addView(more)
+        return row
     }
 
     private fun crashRow(c: Vd.Crash): View {
@@ -485,7 +536,7 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun renderTasks(allRows: List<Row>, allDisp: List<Vd.Disp>, stats: Map<String, Vd.Stat>, crashes: List<Vd.Crash>) {
+    private fun renderTasks(allRows: List<Row>, allDisp: List<Vd.Disp>, stats: Map<String, Vd.Stat>, crashes: List<Vd.Crash>, stops: List<Vd.AutoStop>) {
         val now = System.currentTimeMillis()
         hidingPkgs.entries.removeAll { now - it.value > 5000L }
         hidingDisplays.entries.removeAll { now - it.value > 5000L }
@@ -494,7 +545,7 @@ class MainActivity : Activity() {
         tasksBox.removeAllViews()
         runningCount.text = list.map { it.pkg }.distinct().size.toString()
         val empty = disp.filter { d -> allRows.none { it.display.id == d.id } }
-        if (list.isEmpty() && empty.isEmpty() && crashes.isEmpty()) {
+        if (list.isEmpty() && empty.isEmpty() && crashes.isEmpty() && stops.isEmpty()) {
             tasksBox.addView(emptyNote("Nothing is running. A hidden display is created when you launch an app."))
             return
         }
@@ -507,6 +558,7 @@ class MainActivity : Activity() {
 
         val rows = ArrayList<View>()
         for (c in crashes) if (list.none { it.pkg == c.pkg }) rows.add(crashRow(c))
+        for (a in stops) if (list.none { it.pkg == a.pkg }) rows.add(autoStopRow(a))
         for (r in list) {
             val outer = LinearLayout(this)
             outer.orientation = LinearLayout.VERTICAL

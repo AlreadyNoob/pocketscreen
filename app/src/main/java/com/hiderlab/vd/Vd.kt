@@ -411,6 +411,7 @@ object Vd {
         applyAudio(pkg, false)
         markSession(ctx, pkg)
         clearCrash(ctx, pkg)
+        clearAutoStop(ctx, pkg) // it is running again
         displays.firstOrNull { it.id == display }?.let { orientPrefs(ctx).edit().putBoolean(pkg, it.landscape).apply() }
         // If it is already open on the main screen, try to move that task instead of starting a copy.
         val onMain = tasks(0).firstOrNull { it.second == pkg }
@@ -447,6 +448,28 @@ object Vd {
         val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
         Crash(pkg, t, p.getOrNull(2).orEmpty(), p.getOrNull(1) == "1")
     }.sortedByDescending { it.whenMs }
+
+    // ---- apps stopped by an auto-stop limit ----
+
+    /** [kind] is "Temperature", "Battery" or "Timer"; [ranMin] is how long the app had been running. */
+    data class AutoStop(val pkg: String, val whenMs: Long, val ranMin: Long, val kind: String, val detail: String, val landscape: Boolean)
+
+    private fun stopPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("autostops", Context.MODE_PRIVATE)
+
+    fun recordAutoStop(ctx: Context, pkg: String, kind: String, detail: String) {
+        val ran = sessionMinutes(ctx, pkg) ?: 0L
+        val land = orientPrefs(ctx).getBoolean(pkg, false)
+        stopPrefs(ctx).edit().putString(pkg, listOf(System.currentTimeMillis(), ran, if (land) 1 else 0, kind, detail).joinToString("|")).apply()
+    }
+
+    /** Kept until the user dismisses or relaunches the app. */
+    fun autoStops(ctx: Context): List<AutoStop> = stopPrefs(ctx).all.mapNotNull { (pkg, v) ->
+        val p = (v as? String)?.split("|", limit = 5) ?: return@mapNotNull null
+        val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+        AutoStop(pkg, t, p.getOrNull(1)?.toLongOrNull() ?: 0L, p.getOrNull(3).orEmpty(), p.getOrNull(4).orEmpty(), p.getOrNull(2) == "1")
+    }.sortedByDescending { it.whenMs }
+
+    fun clearAutoStop(ctx: Context, pkg: String) { stopPrefs(ctx).edit().remove(pkg).apply() }
 
     fun clearCrash(ctx: Context, pkg: String) {
         crashPrefs(ctx).edit().remove(pkg).apply()

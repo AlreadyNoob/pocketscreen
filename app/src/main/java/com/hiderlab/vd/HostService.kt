@@ -239,10 +239,22 @@ class HostService : Service() {
             val batLimit = AppSettings.effectiveBattery(ctx, pkg)
             val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
             val ran = Vd.sessionMinutes(ctx, pkg)
+            // kind is what the user sees as the reason, detail has the numbers.
+            var kind = ""
+            var detail = ""
             val reason = when {
-                tempLimit > 0 && tempC != null && tempC >= tempLimit -> "phone overheating, $tempC°C >= $tempLimit°C"
-                batLimit > 0 && !charging && pct <= batLimit -> "battery $pct% <= $batLimit%"
-                maxMin > 0 && ran != null && ran >= maxMin -> "ran ${ran}m >= ${maxMin}m"
+                tempLimit > 0 && tempC != null && tempC >= tempLimit -> {
+                    kind = "Temperature"; detail = "Phone reached $tempC°C (limit $tempLimit°C)"
+                    "phone overheating, $tempC°C >= $tempLimit°C"
+                }
+                batLimit > 0 && !charging && pct <= batLimit -> {
+                    kind = "Battery"; detail = "Battery fell to $pct% (limit $batLimit%)"
+                    "battery $pct% <= $batLimit%"
+                }
+                maxMin > 0 && ran != null && ran >= maxMin -> {
+                    kind = "Timer"; detail = "Time limit of ${Vd.fmtMinutes(maxMin.toLong())} reached"
+                    "ran ${ran}m >= ${maxMin}m"
+                }
                 else -> null
             } ?: continue
             // The scan can be a moment old: don't act on an app that has quit since.
@@ -252,6 +264,7 @@ class HostService : Service() {
                 continue
             }
             Debug.write("Auto-stop: $pkg, $reason")
+            Vd.recordAutoStop(ctx, pkg, kind, detail) // before the stop: it clears the session start
             Vd.stopAppAndDisplay(ctx, pkg)
         }
     }

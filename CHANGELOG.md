@@ -4,6 +4,7 @@ Releases are named `v<version>.<build>`: the first two numbers are the version b
 
 ## 0.20
 
+- An app closed by an auto-stop limit now stays in Running now with the reason (temperature, battery or timer), the numbers behind it, how long it ran and the exact time it stopped. It stays until you dismiss it or relaunch the app.
 - Less background work: the notification, crash check and limits now share one scan every 30 s (60 s while the screen is off) instead of scanning every 5 s. Battery and temperature changes reuse the last scan. Time limits are checked at the exact moment they run out, and an auto-stop skips an app that has already quit.
 - Update checker: Settings → Updates checks GitHub for a newer release, and the app looks by itself at most twice a day (can be turned off).
 - Relaunching an app that is already running now asks first, but only when its size, refresh rate or orientation changed since it started. Otherwise you get the "already running" message.
