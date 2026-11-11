@@ -243,6 +243,9 @@ object Vd {
     fun markSession(ctx: Context, pkg: String) { sessionPrefs(ctx).edit().putLong(pkg, System.currentTimeMillis()).apply() }
     fun clearSession(ctx: Context, pkg: String) { sessionPrefs(ctx).edit().remove(pkg).apply() }
 
+    /** When [pkg]'s current session started (ms since epoch), or null if unknown. */
+    fun sessionStart(ctx: Context, pkg: String): Long? = sessionPrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+
     /** Whole minutes [pkg] has been running here, or null if unknown. */
     fun sessionMinutes(ctx: Context, pkg: String): Long? {
         val t = sessionPrefs(ctx).getLong(pkg, 0L)
@@ -472,7 +475,8 @@ object Vd {
             val p = exec("pidof ${c.pkg}").trim()
             if (p.firstOrNull()?.isDigit() == true) clearCrash(ctx, c.pkg)
         }
-        val onMain = tasks(0).map { it.second }.toSet()
+        // Only listed when an app we started is missing from the hidden displays.
+        val onMain by lazy { tasks(0).map { it.second }.toSet() }
         for ((pkg, v) in sessionPrefs(ctx).all) {
             val started = v as? Long ?: continue
             if (pkg in onDisplays || pkg in busy || now - started < 10_000L) continue

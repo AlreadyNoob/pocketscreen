@@ -4,6 +4,7 @@ Releases are named `v<version>.<build>`: the first two numbers are the version b
 
 ## 0.20
 
+- Less background work: the notification, crash check and limits now share one scan every 30 s (60 s while the screen is off) instead of scanning every 5 s. Battery and temperature changes reuse the last scan. Time limits are checked at the exact moment they run out, and an auto-stop skips an app that has already quit.
 - Update checker: Settings → Updates checks GitHub for a newer release, and the app looks by itself at most twice a day (can be turned off).
 - Relaunching an app that is already running now asks first, but only when its size, refresh rate or orientation changed since it started. Otherwise you get the "already running" message.
 - The notification's app count is read from the live display list, so it no longer keeps showing an app you already stopped. With nothing running it says "No apps running".
