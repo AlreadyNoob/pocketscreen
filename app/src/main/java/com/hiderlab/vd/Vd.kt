@@ -11,8 +11,14 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** App-side connection to the Shizuku service. Shared by the UI, viewer and notification. */
 object Vd {
+    /**
+     * Orientation each display was asked for. The shape alone can't tell a square display (a custom
+     * 240x240, say) from a portrait one, so what was requested at creation is remembered here.
+     */
+    private val requestedLandscape = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
     data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0, val fps: Int = 0) {
-        val landscape: Boolean get() = w > h
+        val landscape: Boolean get() = if (w != h) w > h else requestedLandscape[id] == true
         val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
     }
 
@@ -367,6 +373,7 @@ object Vd {
         var id = -1
         if (r.startsWith("OK:")) {
             id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
+            if (id >= 0) requestedLandscape[id] = landscape
             refreshInfo()
             if (fps > 0) log("display #$id refresh as Android reports it:\n" +
                 exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
@@ -389,7 +396,7 @@ object Vd {
     fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
         // Only reuse a display that already has exactly the size and refresh rate a new one would get now.
         val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
-        return displays.firstOrNull { it.w == w && it.h == h && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
+        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
             ?: createDisplay(ctx, landscape, cfg, fps)
     }
 
