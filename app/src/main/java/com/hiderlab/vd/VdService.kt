@@ -77,6 +77,7 @@ class VdService : IVdService.Stub() {
     }
 
     override fun createDisplay(w: Int, h: Int, dpi: Int, fps: Int): String {
+        lastError = "" // an old message must not outlive the display it was about
         val errors = StringBuilder()
         for (flags in intArrayOf(FULL, MID, BASE)) {
             try {
@@ -244,14 +245,18 @@ class VdService : IVdService.Stub() {
         }
     }
 
-    override fun rotation(id: Int): Int = try {
-        val c = Class.forName("android.hardware.display.DisplayManagerGlobal")
-        val g = c.getMethod("getInstance").invoke(null)
-        val d = c.getMethod("getRealDisplay", Int::class.javaPrimitiveType).invoke(g, id) as android.view.Display
-        d.rotation
-    } catch (t: Throwable) {
-        if (lastError.isEmpty()) lastError = "rotation: " + unwrap(t).toString().take(150)
-        0
+    override fun rotation(id: Int): Int {
+        val c = try { Class.forName("android.hardware.display.DisplayManagerGlobal") } catch (_: Throwable) { return 0 }
+        val g = try { c.getMethod("getInstance").invoke(null) } catch (_: Throwable) { return 0 }
+        // getRealDisplay can return null for a hidden display on some phones; the display info always works.
+        try {
+            val d = c.getMethod("getRealDisplay", Int::class.javaPrimitiveType).invoke(g, id) as? android.view.Display
+            if (d != null) return d.rotation
+        } catch (_: Throwable) {}
+        return try {
+            val info = c.getMethod("getDisplayInfo", Int::class.javaPrimitiveType).invoke(g, id)
+            info?.javaClass?.getField("rotation")?.getInt(info) ?: 0
+        } catch (_: Throwable) { 0 } // a failed rotation lookup is not an input problem: just assume 0
     }
 
     // ---- task listing ----
@@ -351,7 +356,6 @@ class VdService : IVdService.Stub() {
                     "onPaused", "onResumed", "onStopped" -> {
                         val note = "display callback ${m.name} (${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())})"
                         Log.w("VdService", note)
-                        if (m.name != "onResumed") lastError = note
                         null
                     }
                     else -> null
