@@ -4,6 +4,7 @@ Releases are named `v<version>.<build>`: the first two numbers are the version b
 
 ## 0.20
 
+- Auto-stop limits now work while the screen is off. The checks used to wait on a timer that doesn't run while the phone is in deep sleep, so a battery, temperature or time limit only fired when you woke the phone. They now run from alarms that wake it briefly: every 30 s with the screen on; with it off, as late as the limits allow (battery limits from the recent drain rate, at most every 10 minutes), and a time limit exactly when it runs out.
 - An app closed by an auto-stop limit now stays in Running now with the reason (temperature, battery or timer), the numbers behind it, how long it ran and the exact time it stopped. It stays until you dismiss it or relaunch the app.
 - Less background work: the notification, crash check and limits now share one scan every 30 s (60 s while the screen is off) instead of scanning every 5 s. Battery and temperature changes reuse the last scan. Time limits are checked at the exact moment they run out, and an auto-stop skips an app that has already quit.
 - Update checker: Settings → Updates checks GitHub for a newer release, and the app looks by itself at most twice a day (can be turned off).

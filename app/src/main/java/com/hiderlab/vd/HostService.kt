@@ -53,9 +53,13 @@ class HostService : Service() {
 
     @Volatile private var watching = false
     @Volatile private var lastSig = ""
-    @Volatile private var watchThread: Thread? = null
-    /** The watchdog waits on this, so a change in the running apps can make it re-plan its next wake-up. */
-    private val replan = java.util.concurrent.Semaphore(0)
+    private val alarmAction = "com.hiderlab.vd.WATCHDOG"
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var alarmRegistered = false
+    /** Recent battery readings, to guess how soon a battery limit could be reached. */
+    @Volatile private var lastPct = -1
+    @Volatile private var lastPctAt = 0L
+    @Volatile private var drainPerHour = 0f
     /** Apps found on the hidden displays by the last scan. The battery receiver reuses it instead of scanning again. */
     @Volatile private var cachedApps: List<String> = emptyList()
 
@@ -63,43 +67,124 @@ class HostService : Service() {
 
     override fun onDestroy() {
         watching = false
-        watchThread?.interrupt()
+        stopAlarm()
         Vd.listeners.remove(changeListener)
         if (batteryRegistered) { try { unregisterReceiver(batteryReceiver) } catch (_: Throwable) {}; batteryRegistered = false }
         super.onDestroy()
     }
 
     /**
-     * Runs a full pass (notification, crashed apps, limits) every 30 s (60 s while the phone's screen
-     * is off) as a fallback, and also exactly when an app's time limit runs out. Changes the app makes
-     * itself reach the notification straight away through [changeListener], and battery or temperature
-     * changes through [batteryReceiver], so the timed pass only has to catch apps that quit on their own.
+     * The checks run from alarms, not from a timer: with the screen off the CPU suspends, and a plain
+     * timer (or the battery broadcast) then waits until something else wakes the phone, so the limits
+     * would only fire when you picked it up. An alarm wakes the phone, a short wake lock keeps it awake
+     * while the pass runs, and the next alarm is set for when something could actually need attention:
+     * every 30 s while the screen is on; with it off, as late as the limits allow (see [nextDelay]).
+     * A time limit gets an alarm at the moment it runs out. Changes the app makes itself reach the
+     * notification straight away through [changeListener].
      */
+    private val alarmReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            when (i.action) {
+                alarmAction -> runPassWithWakeLock()
+                I2.ACTION_SCREEN_ON, I2.ACTION_SCREEN_OFF -> Thread { scheduleNext() }.start()
+            }
+        }
+    }
+
     private fun startWatchdog() {
         if (watching) return
         watching = true
-        val ctx = applicationContext
-        val t = Thread {
-            val me = Thread.currentThread()
-            var lastPass = System.currentTimeMillis()
-            while (watching && watchThread === me) {
-                replan.drainPermits() // anything signalled before this point is already in cachedApps
-                val pm = getSystemService(PowerManager::class.java)
-                val base = if (pm != null && !pm.isInteractive) 60_000L else 30_000L
-                val due = minOf(lastPass + base, nextTimeLimitAt(ctx, lastPass))
-                val wait = due - System.currentTimeMillis()
-                if (wait > 0) {
-                    try { replan.tryAcquire(wait, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
-                    if (!watching || watchThread !== me) break
-                    // Woken early because the running apps changed: plan the next wake-up again.
-                    if (System.currentTimeMillis() < due) continue
-                }
-                lastPass = System.currentTimeMillis()
-                checkLimits(ctx, fresh = true)
-            }
+        val f = IntentFilter(alarmAction).apply {
+            addAction(I2.ACTION_SCREEN_ON); addAction(I2.ACTION_SCREEN_OFF)
         }
-        watchThread = t
-        t.start()
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(alarmReceiver, f, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(alarmReceiver, f)
+        alarmRegistered = true
+        scheduleNext()
+    }
+
+    private fun stopAlarm() {
+        try { getSystemService(android.app.AlarmManager::class.java).cancel(alarmIntent()) } catch (_: Throwable) {}
+        if (alarmRegistered) { try { unregisterReceiver(alarmReceiver) } catch (_: Throwable) {}; alarmRegistered = false }
+        try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+    }
+
+    private fun alarmIntent(): PendingIntent = PendingIntent.getBroadcast(
+        this, 3, Intent(alarmAction).setPackage(packageName),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
+    @Volatile private var lastPass = System.currentTimeMillis()
+
+    private fun runPassWithWakeLock() {
+        val pm = getSystemService(PowerManager::class.java)
+        val wl = wakeLock ?: pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketScreen:check").also { wakeLock = it }
+        try { wl.acquire(60_000L) } catch (_: Throwable) {}
+        val ctx = applicationContext
+        Thread {
+            try {
+                lastPass = System.currentTimeMillis()
+                Debug.write("check run (screen ${if (pm.isInteractive) "on" else "off"})")
+                checkLimits(ctx, fresh = true)
+            } finally {
+                try { if (wl.isHeld) wl.release() } catch (_: Throwable) {}
+                scheduleNext()
+            }
+        }.start()
+    }
+
+    /** Sets the next alarm. Safe to call at any time: it replaces the one already set. */
+    private fun scheduleNext() {
+        if (!watching) return
+        val ctx = applicationContext
+        val now = System.currentTimeMillis()
+        val due = minOf(lastPass + nextDelay(ctx), nextTimeLimitAt(ctx, lastPass))
+        val wait = (due - now).coerceAtLeast(1_000L)
+        try {
+            getSystemService(android.app.AlarmManager::class.java).setAndAllowWhileIdle(
+                android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                android.os.SystemClock.elapsedRealtime() + wait, alarmIntent()
+            )
+        } catch (t: Throwable) { Debug.write("alarm: $t") }
+    }
+
+    /**
+     * How long until the next regular pass. The screen being on is cheap, so 30 s. With it off the
+     * phone has to be woken for each pass, so go as long as the limits allow:
+     * - a temperature limit can be crossed at any time: every 5 minutes;
+     * - a battery limit: half the time it would take to drain down to it at the recent rate, but never
+     *   less than 2 or more than 10 minutes; not at all while charging;
+     * - otherwise (only the notification and crash check): every 10 minutes.
+     */
+    private fun nextDelay(ctx: Context): Long {
+        val pm = getSystemService(PowerManager::class.java)
+        if (pm == null || pm.isInteractive) return 30_000L
+        var best = 10 * 60_000L
+        var anyTemp = false
+        var batEta = Long.MAX_VALUE
+        for (pkg in cachedApps) {
+            if (AppSettings.effectiveTemp(ctx, pkg) > 0) anyTemp = true
+            val lim = AppSettings.effectiveBattery(ctx, pkg)
+            if (lim > 0 && lastPct > lim && drainPerHour > 0.05f) {
+                val eta = ((lastPct - lim) / drainPerHour * 3_600_000L).toLong()
+                if (eta < batEta) batEta = eta
+            } else if (lim > 0 && lastPct > lim) batEta = minOf(batEta, 20 * 60_000L) // rate unknown yet
+        }
+        if (anyTemp) best = minOf(best, 5 * 60_000L)
+        if (batEta != Long.MAX_VALUE) best = minOf(best, (batEta / 2).coerceIn(2 * 60_000L, 10 * 60_000L))
+        return best
+    }
+
+    /** Remembers battery readings, to estimate how fast it is draining (% per hour). */
+    private fun noteBattery(pct: Int, charging: Boolean) {
+        val now = System.currentTimeMillis()
+        if (charging) { lastPct = pct; lastPctAt = now; drainPerHour = 0f; return }
+        if (lastPct < 0 || pct > lastPct) { lastPct = pct; lastPctAt = now; return }
+        if (pct < lastPct) {
+            val hours = (now - lastPctAt) / 3_600_000f
+            if (hours > 0.02f) drainPerHour = (lastPct - pct) / hours
+            lastPct = pct; lastPctAt = now
+        }
     }
 
     /**
@@ -145,7 +230,7 @@ class HostService : Service() {
     /** Remembers [apps] and rebuilds the ongoing notification if the set has changed. */
     private fun showApps(apps: List<String>) {
         cachedApps = apps
-        replan.release() // the watchdog re-plans around the new list
+        Thread { scheduleNext() }.start() // the plan depends on which apps are running
         val sig = apps.sorted().toString()
         if (sig == lastSig) return
         lastSig = sig
@@ -228,6 +313,7 @@ class HostService : Service() {
         val status = b?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
         val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
+        noteBattery(pct, charging)
         // Reported in tenths of a degree Celsius.
         val tempC: Float? = b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
             ?.takeIf { it != Int.MIN_VALUE }?.let { it / 10f }
