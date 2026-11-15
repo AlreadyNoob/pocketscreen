@@ -240,8 +240,72 @@ object Vd {
 
     private fun sessionPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("sessions", Context.MODE_PRIVATE)
 
-    fun markSession(ctx: Context, pkg: String) { sessionPrefs(ctx).edit().putLong(pkg, System.currentTimeMillis()).apply() }
-    fun clearSession(ctx: Context, pkg: String) { sessionPrefs(ctx).edit().remove(pkg).apply() }
+    fun markSession(ctx: Context, pkg: String) {
+        sessionPrefs(ctx).edit().putLong(pkg, System.currentTimeMillis()).apply()
+        setDeadline(ctx, pkg)
+    }
+    fun clearSession(ctx: Context, pkg: String) {
+        sessionPrefs(ctx).edit().remove(pkg).apply()
+        deadlinePrefs(ctx).edit().remove(pkg).apply()
+    }
+
+    // ---- "stop at a clock time" ----
+
+    private fun deadlinePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("deadlines", Context.MODE_PRIVATE)
+
+    /** The next moment after [from] when the clock reads [minuteOfDay] (0..1439). */
+    fun nextOccurrence(minuteOfDay: Int, from: Long): Long {
+        val c = java.util.Calendar.getInstance()
+        c.timeInMillis = from
+        c.set(java.util.Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+        c.set(java.util.Calendar.MINUTE, minuteOfDay % 60)
+        c.set(java.util.Calendar.SECOND, 0)
+        c.set(java.util.Calendar.MILLISECOND, 0)
+        if (c.timeInMillis <= from) c.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        return c.timeInMillis
+    }
+
+    /** Fixes the stop moment for [pkg] from now: the next time its clock limit comes round. Removed if there is none. */
+    fun setDeadline(ctx: Context, pkg: String) {
+        val at = AppSettings.effectiveAt(ctx, pkg)
+        val e = deadlinePrefs(ctx).edit()
+        if (at > 0) e.putLong(pkg, nextOccurrence(at - 1, System.currentTimeMillis())) else e.remove(pkg)
+        e.apply()
+    }
+
+    /** After a clock limit was changed in Settings: running apps get their next stop moment from now. */
+    fun refreshDeadlines(ctx: Context) {
+        for (pkg in sessionPrefs(ctx).all.keys) setDeadline(ctx, pkg)
+    }
+
+    /** When [pkg] will be stopped by its clock limit (ms since epoch), or null if none applies. */
+    fun deadline(ctx: Context, pkg: String): Long? {
+        if (AppSettings.effectiveAt(ctx, pkg) <= 0) return null
+        return deadlinePrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+    }
+
+    fun clockText(ctx: Context, minuteOfDay: Int): String {
+        val c = java.util.Calendar.getInstance()
+        c.set(java.util.Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+        c.set(java.util.Calendar.MINUTE, minuteOfDay % 60)
+        return android.text.format.DateFormat.getTimeFormat(ctx).format(c.time)
+    }
+
+    /** Battery, temperature and clock limits that apply to [pkg], as "35% battery · 45°C · 7:00 AM". Null if none. */
+    fun limitsText(ctx: Context, pkg: String): String? {
+        val parts = ArrayList<String>()
+        AppSettings.effectiveBattery(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it% battery") }
+        AppSettings.effectiveTemp(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it°C") }
+        deadline(ctx, pkg)?.let { parts.add(deadlineText(ctx, it)) }
+        return if (parts.isEmpty()) null else "Stops at " + parts.joinToString(" · ")
+    }
+
+    /** "7:00 AM", or "tomorrow 7:00 AM" when it isn't today. */
+    fun deadlineText(ctx: Context, at: Long): String {
+        val clock = android.text.format.DateFormat.getTimeFormat(ctx).format(java.util.Date(at))
+        val day = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+        return if (day.format(java.util.Date(at)) == day.format(java.util.Date())) clock else "tomorrow $clock"
+    }
 
     /** When [pkg]'s current session started (ms since epoch), or null if unknown. */
     fun sessionStart(ctx: Context, pkg: String): Long? = sessionPrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }

@@ -201,6 +201,10 @@ class HostService : Service() {
             val at = start + mins * 60_000L + 250L // a moment after the minute is reached
             if (at > checkedAt && at < next) next = at
         }
+        for (pkg in cachedApps) {
+            val at = Vd.deadline(ctx, pkg) ?: continue // a clock limit
+            if (at > checkedAt && at < next) next = at
+        }
         return next
     }
 
@@ -325,6 +329,7 @@ class HostService : Service() {
             val batLimit = AppSettings.effectiveBattery(ctx, pkg)
             val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
             val ran = Vd.sessionMinutes(ctx, pkg)
+            val clockAt = Vd.deadline(ctx, pkg)
             // kind is what the user sees as the reason, detail has the numbers.
             var kind = ""
             var detail = ""
@@ -340,6 +345,10 @@ class HostService : Service() {
                 maxMin > 0 && ran != null && ran >= maxMin -> {
                     kind = "Timer"; detail = "Time limit of ${Vd.fmtMinutes(maxMin.toLong())} reached"
                     "ran ${ran}m >= ${maxMin}m"
+                }
+                clockAt != null && System.currentTimeMillis() >= clockAt -> {
+                    kind = "Time of day"; detail = "Set for ${Vd.clockText(ctx, AppSettings.effectiveAt(ctx, pkg) - 1)}"
+                    "clock limit reached"
                 }
                 else -> null
             } ?: continue

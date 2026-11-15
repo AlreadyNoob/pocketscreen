@@ -44,6 +44,13 @@ object AppSettings {
     fun autoStopTemp(c: Context): Int = p(c).getInt("auto_temp", 0)
     fun setAutoStopTemp(c: Context, v: Int) { p(c).edit().putInt("auto_temp", v).apply() }
 
+    /**
+     * Stop an app at a clock time. The value is minute-of-day + 1 (1 = 00:00, 1440 = 23:59), 0 = off.
+     * It means the next time the clock reaches it after the app is launched, once.
+     */
+    fun autoStopAt(c: Context): Int = p(c).getInt("auto_at", 0)
+    fun setAutoStopAt(c: Context, v: Int) { p(c).edit().putInt("auto_at", v).apply() }
+
     /** Show memory and CPU on each running app. On by default; turning it off makes refreshing faster. */
     fun showStats(c: Context): Boolean = p(c).getBoolean("show_stats", true)
     fun setShowStats(c: Context, on: Boolean) { p(c).edit().putBoolean("show_stats", on).apply() }
@@ -55,6 +62,10 @@ object AppSettings {
     fun setAppTemp(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_temp_$pkg", v).apply() }
     fun appMinutes(c: Context, pkg: String): Int = p(c).getInt("auto_min_$pkg", -1)
     fun setAppMinutes(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_min_$pkg", v).apply() }
+
+    fun appAt(c: Context, pkg: String): Int = p(c).getInt("auto_at_$pkg", -1)
+    fun setAppAt(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_at_$pkg", v).apply() }
+    fun effectiveAt(c: Context, pkg: String): Int = appAt(c, pkg).let { if (it < 0) autoStopAt(c) else it }
 
     fun effectiveBattery(c: Context, pkg: String): Int = appBattery(c, pkg).let { if (it < 0) autoStopBattery(c) else it }
     fun effectiveTemp(c: Context, pkg: String): Int = appTemp(c, pkg).let { if (it < 0) autoStopTemp(c) else it }

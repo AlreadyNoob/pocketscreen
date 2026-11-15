@@ -629,10 +629,18 @@ class MainActivity : Activity() {
             row.addView(muteBtn, LinearLayout.LayoutParams(-2, -2).also { it.rightMargin = dp(4) })
             row.addView(more)
             outer.addView(row)
-            if (pills.childCount > 0) {
+            val limits = Vd.limitsText(this, r.pkg)
+            if (pills.childCount > 0 || limits != null) {
                 row.setPadding(dp(16), dp(14), dp(4), dp(10))
-                pills.setPadding(dp(16), 0, dp(12), dp(14))
-                outer.addView(pills, LinearLayout.LayoutParams(-1, -2))
+                if (pills.childCount > 0) {
+                    pills.setPadding(dp(16), 0, dp(12), if (limits != null) dp(8) else dp(14))
+                    outer.addView(pills, LinearLayout.LayoutParams(-1, -2))
+                }
+                if (limits != null) {
+                    val lt = Ui.text(this, limits, 12f, Ui.MUTED)
+                    lt.setPadding(dp(16), 0, dp(12), dp(14))
+                    outer.addView(lt, LinearLayout.LayoutParams(-1, -2))
+                }
             }
             rows.add(outer)
         }
@@ -1118,13 +1126,14 @@ class MainActivity : Activity() {
         return row
     }
 
-    private enum class Limit { BATTERY, MINUTES, TEMP }
+    private enum class Limit { BATTERY, MINUTES, TEMP, CLOCK }
 
     private fun limitLabel(kind: Limit, v: Int, defaultValue: Int?): String = when {
         v < 0 -> "Default (${limitLabel(kind, defaultValue ?: 0, null)})"
         v == 0 -> "Off"
         kind == Limit.BATTERY -> "$v%"
         kind == Limit.TEMP -> "$v°C"
+        kind == Limit.CLOCK -> Vd.clockText(this, v - 1)
         v < 60 -> "$v min"
         v == 60 -> "1 hour"
         v % 60 == 0 -> "${v / 60} hours"
@@ -1184,6 +1193,7 @@ class MainActivity : Activity() {
                     Limit.BATTERY -> listOf(10, 15, 20, 30, 50)
                     Limit.TEMP -> listOf(40, 42, 45, 48, 50)
                     Limit.MINUTES -> listOf(15, 30, 60, 120, 240)
+                    Limit.CLOCK -> listOf(6, 7, 8, 9, 10).map { it * 60 + 1 }
                 }
                 val opts = ArrayList<Pair<String, Int>>()
                 if (defaultValue != null) opts.add(limitLabel(kind, -1, defaultValue) to -1)
@@ -1194,16 +1204,24 @@ class MainActivity : Activity() {
                 val cur = if (defaultValue == 0 && value == 0) -1 else value
                 Ui.group(col, opts.map { (label, v) -> optionRow(label, cur == v) { pick(v) } }, top = 14)
 
-                Ui.add(col, Ui.text(this, when (kind) { Limit.BATTERY -> "Custom battery level (%, 1–99)"; Limit.TEMP -> "Custom temperature (°C, 30–60)"; Limit.MINUTES -> "Custom time (minutes, 1–1440)" }, 13f, Ui.MUTED), top = 22)
+                Ui.add(col, Ui.text(this, when (kind) { Limit.BATTERY -> "Custom battery level (%, 1–99)"; Limit.TEMP -> "Custom temperature (°C, 30–60)"; Limit.MINUTES -> "Custom time (minutes, 1–1440)"; Limit.CLOCK -> "Next time the clock reaches it, once" }, 13f, Ui.MUTED), top = 22)
+                if (kind == Limit.CLOCK) {
+                    Ui.add(col, Ui.button(this, "Pick a time", Ui.Kind.FILLED) {
+                        val base = if (value > 0) value - 1 else 7 * 60
+                        android.app.TimePickerDialog(this, { _, h, m -> pick(h * 60 + m + 1) },
+                            base / 60, base % 60, android.text.format.DateFormat.is24HourFormat(this)).show()
+                    }, top = 12)
+                    return@sheet
+                }
                 val min = if (kind == Limit.TEMP) 30 else 1
-                val max = when (kind) { Limit.BATTERY -> 99; Limit.TEMP -> 60; Limit.MINUTES -> 1440 }
+                val max = when (kind) { Limit.BATTERY -> 99; Limit.TEMP -> 60; Limit.MINUTES -> 1440; Limit.CLOCK -> 1440 }
                 val e = EditText(this)
                 e.filters = arrayOf(InputFilter { src, st, en, dest, ds, de ->
                     val next = dest.toString().substring(0, ds) + src.subSequence(st, en) + dest.toString().substring(de)
                     if (next.isEmpty()) null
                     else if (next.length > max.toString().length || (next.toIntOrNull() ?: Int.MAX_VALUE) > max) "" else null
                 })
-                e.hint = when (kind) { Limit.BATTERY -> "e.g. 25"; Limit.TEMP -> "e.g. 43"; Limit.MINUTES -> "e.g. 90" }
+                e.hint = when (kind) { Limit.BATTERY -> "e.g. 25"; Limit.TEMP -> "e.g. 43"; Limit.MINUTES -> "e.g. 90"; Limit.CLOCK -> "" }
                 e.inputType = InputType.TYPE_CLASS_NUMBER
                 e.isSingleLine = true
                 Ui.styleInput(this, e)
@@ -1366,7 +1384,8 @@ class MainActivity : Activity() {
             section("Auto-stop", listOf(
                 settingsLimit("Stop at low battery", Limit.BATTERY, AppSettings.appBattery(this, pkg), AppSettings.autoStopBattery(this)) { AppSettings.setAppBattery(this, pkg, it) },
                 settingsLimit("Stop when overheating", Limit.TEMP, AppSettings.appTemp(this, pkg), AppSettings.autoStopTemp(this)) { AppSettings.setAppTemp(this, pkg, it) },
-                settingsLimit("Stop after running", Limit.MINUTES, AppSettings.appMinutes(this, pkg), AppSettings.autoStopMinutes(this)) { AppSettings.setAppMinutes(this, pkg, it); refreshTasks() }
+                settingsLimit("Stop after running", Limit.MINUTES, AppSettings.appMinutes(this, pkg), AppSettings.autoStopMinutes(this)) { AppSettings.setAppMinutes(this, pkg, it); refreshTasks() },
+                settingsLimit("Stop at time", Limit.CLOCK, AppSettings.appAt(this, pkg), AppSettings.autoStopAt(this)) { AppSettings.setAppAt(this, pkg, it); Vd.refreshDeadlines(applicationContext); refreshTasks() }
             ))
 
             section("Viewer", listOf(
@@ -1418,7 +1437,8 @@ class MainActivity : Activity() {
             section("Auto-stop defaults", listOf(
                 settingsLimit("Stop at low battery", Limit.BATTERY, AppSettings.autoStopBattery(this), null) { AppSettings.setAutoStopBattery(this, it) },
                 settingsLimit("Stop when overheating", Limit.TEMP, AppSettings.autoStopTemp(this), null) { AppSettings.setAutoStopTemp(this, it) },
-                settingsLimit("Stop app after running", Limit.MINUTES, AppSettings.autoStopMinutes(this), null) { AppSettings.setAutoStopMinutes(this, it); refreshTasks() }
+                settingsLimit("Stop app after running", Limit.MINUTES, AppSettings.autoStopMinutes(this), null) { AppSettings.setAutoStopMinutes(this, it); refreshTasks() },
+                settingsLimit("Stop app at time", Limit.CLOCK, AppSettings.autoStopAt(this), null) { AppSettings.setAutoStopAt(this, it); Vd.refreshDeadlines(applicationContext); refreshTasks() }
             ), "Used by apps with no setting of their own. Set one per app from its ⋮ menu. Stopping closes the app and removes its display. Low battery only applies when not charging. Overheating uses the battery temperature and applies even while charging.")
             section("Behavior", listOf(
                 settingsToggle("Show memory and CPU", "On each running app. Turn off for faster refreshing.", AppSettings.showStats(this)) {
