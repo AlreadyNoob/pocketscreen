@@ -39,6 +39,10 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var suppressKb = false
     /** The display has its own keyboard: the app raises and uses it, and the phone's keyboard stays out of it. */
     private var displayKb = false
+    /** Make the display shorter while the phone's keyboard is open (a setting). */
+    private var resizeKb = false
+    private var origDh = 0
+    private var resizing = false
     private var backControls = true
     private var lastBack = 0L
     private var barsShown = false
@@ -188,7 +192,15 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         suppressKb = AppSettings.suppressKeyboard(this)
         displayKb = Vd.hasDisplayKeyboard(displayId)
         if (suppressKb || displayKb) sv.editorAllowed = false
-        if (displayKb) kbIcon.visibility = View.GONE
+        if (displayKb) {
+            kbIcon.visibility = View.GONE
+            // Keep the viewer from claiming the keyboard, so Android may give it to the app on the display.
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+        }
+        resizeKb = !displayKb && AppSettings.resizeForKeyboard(this)
+        origDh = dh
+        // A viewer that was killed while the display was shortened leaves it short: set the real size first.
+        if (resizeKb) Thread { try { Vd.service?.resize(displayId, dw, dh) } catch (_: Throwable) {} }.start()
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
         // The exclusion goes on the full-width box, so it covers the real screen edges even when the
@@ -284,8 +296,44 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
      * With the keyboard open, slides the display up just far enough that the spot you last
      * touched (normally the text field) stays above the keyboard. The display keeps its size.
      */
+    /** The display's height that fits above the keyboard, or its full height with no keyboard. */
+    private fun applyKeyboardResize() {
+        var want = origDh
+        if (kbVisible && imeHeight > 0) {
+            val loc = IntArray(2)
+            box.getLocationOnScreen(loc)
+            val covered = (loc[1] + box.height - (box.rootView.height - imeHeight)).coerceAtLeast(0)
+            if (covered > 0 && box.width > 0) {
+                val availH = box.height - covered
+                val fitted = (availH * dw.toFloat() / box.width).toInt() and 1.inv() // even
+                want = fitted.coerceIn((origDh * 0.4f).toInt(), origDh)
+            }
+        }
+        sv.animate().translationY(0f).setDuration(0).start()
+        if (want == dh || resizing || kotlin.math.abs(want - dh) < 8) return
+        resizing = true
+        Thread {
+            val r = try { Vd.service?.resize(displayId, dw, want) } catch (t: Throwable) { t.toString() }
+            ui.post {
+                resizing = false
+                if (r == "OK") {
+                    dh = want
+                    sv.holder.setFixedSize(dw, dh)
+                    fit()
+                    // the keyboard may have opened or closed meanwhile
+                    if (::box.isInitialized) applyKeyboardResize()
+                } else {
+                    Vd.log("resize for keyboard: $r")
+                    resizeKb = false // not supported here: back to sliding the display
+                    if (::box.isInitialized) updatePan()
+                }
+            }
+        }.start()
+    }
+
     private fun updatePan() {
         if (!::box.isInitialized || sv.height <= 0 || displayKb) return
+        if (resizeKb && rot == 0) { applyKeyboardResize(); return }
         var shift = 0f
         if (kbVisible && imeHeight > 0) {
             val loc = IntArray(2)
@@ -304,6 +352,15 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             }
         }
         sv.animate().translationY(-shift).setDuration(150).start()
+    }
+
+    override fun onDestroy() {
+        // Give the display its real height back.
+        if (resizeKb && dh != origDh) {
+            val id = displayId
+            Thread { try { Vd.service?.resize(id, dw, origDh) } catch (_: Throwable) {} }.start()
+        }
+        super.onDestroy()
     }
 
     // ---- leaving: only via the arrow ----

@@ -137,6 +137,17 @@ class VdService : IVdService.Stub() {
         return applyImePolicy(id, local)
     }
 
+    override fun resize(id: Int, w: Int, h: Int): String {
+        val vd = displays[id] ?: return "no such display"
+        return try {
+            Class.forName("android.hardware.display.IDisplayManager")
+                .getMethod("resizeVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"),
+                    Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .invoke(vd.dm, vd.cb, w, h, vd.dpi)
+            "OK"
+        } catch (t: Throwable) { unwrap(t).toString().take(150) }
+    }
+
     override fun releaseDisplay(id: Int): String {
         displays.remove(id)?.let { cleanup(it) }
         // Spawning a shell takes a moment, so do it in the background and return right away.
