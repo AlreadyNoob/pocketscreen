@@ -148,10 +148,11 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Ui.BG)
 
-        val back = IconView(this, IconView.BACK)
+        val back = IconView(this, IconView.BACK, 36)
+        back.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 11f)), Ui.dpf(this, 11f))
         back.contentDescription = "Back to main menu"
         back.setOnClickListener { leave() }
-        bar.addView(back, LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)))
+        bar.addView(back, LinearLayout.LayoutParams(Ui.dp(this, 36), Ui.dp(this, 36)).also { it.leftMargin = Ui.dp(this, 8); it.rightMargin = Ui.dp(this, 8) })
 
         val titles = LinearLayout(this)
         titles.orientation = LinearLayout.VERTICAL
@@ -166,10 +167,11 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         titles.addView(subView)
         bar.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
 
-        kbIcon = IconView(this, IconView.KEYBOARD)
+        kbIcon = IconView(this, IconView.KEYBOARD, 36)
+        kbIcon.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 11f)), Ui.dpf(this, 11f))
         kbIcon.contentDescription = "Toggle keyboard"
         kbIcon.setOnClickListener { toggleKeyboard() }
-        bar.addView(kbIcon, LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)))
+        bar.addView(kbIcon, LinearLayout.LayoutParams(Ui.dp(this, 36), Ui.dp(this, 36)).also { it.rightMargin = Ui.dp(this, 10) })
         root.addView(bar, LinearLayout.LayoutParams(-1, Ui.dp(this, 48)))
         // hairline between the bar and the display
         val rule = View(this)
