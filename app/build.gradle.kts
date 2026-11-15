@@ -4,6 +4,7 @@ plugins {
 }
 
 // CI sets GITHUB_RUN_NUMBER, so every build gets a higher versionCode and installs over the last one.
+// versionName is the release version CI works out (APP_VERSION); local builds use appVersion.
 val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
 android {
@@ -14,7 +15,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = runNumber
-        versionName = "${project.property("appVersion")}.$runNumber"
+        versionName = System.getenv("APP_VERSION") ?: project.property("appVersion").toString()
     }
     // Fixed signing key, so every build has the same signature and installs over the old one.
     signingConfigs {

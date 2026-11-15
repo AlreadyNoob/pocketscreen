@@ -44,7 +44,7 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 
 By default apps are launched with the "exclude from Recents" flag so hidden apps do not clutter Recents. Turn off **Hide apps from Recents** in Settings if you would rather see them there.
 
-The changes in each version are listed in [CHANGELOG.md](CHANGELOG.md).
+Changes up to 0.20 are in [CHANGELOG.md](CHANGELOG.md). From 1.0.0 on, each release page lists what changed.
 
 ## How it works
 
@@ -63,7 +63,17 @@ gradle assembleDebug     # Gradle 8.10+, JDK 17
 
 The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
-GitHub Actions (`.github/workflows/build.yml`) builds on every push and pull request, uploads the APK as a workflow artifact, and on pushes to `main` publishes a release named `v<appVersion>.<run number>`, with the matching section of `CHANGELOG.md` as its notes. Add a section to the changelog when you raise `appVersion`. The version base is `appVersion` in `gradle.properties`. The version code is the run number.
+GitHub Actions (`.github/workflows/build.yml`) builds on every push and pull request and uploads the APK as a workflow artifact. On pushes to `main` it also publishes a release.
+
+Versions follow `major.minor.patch` and are worked out from the commit messages since the last release (`.github/scripts/version.sh`):
+
+| Commit message starts with | Raises |
+| --- | --- |
+| `feat!:` or has `BREAKING CHANGE` | major |
+| `feat:` | minor |
+| `fix:`, or anything else | patch |
+
+The highest one in a push wins. The release notes are built from the same messages ("New", "Fixed", "Other"), so write them as a short sentence of what changed. The first release uses `appVersion` in `gradle.properties`. The Android version code is the CI run number, so every build installs over the last one.
 
 The debug build is signed with `app/hiderlab.jks`, a key that is committed to the repository on purpose so that builds keep the same signature. It is not a secret and not a release-grade key.
 

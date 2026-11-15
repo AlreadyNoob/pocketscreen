@@ -6,15 +6,15 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Looks for a newer GitHub release. Release tags are `v<appVersion>.<build number>` and the build
- * number is also the app's versionCode, so "newer" simply means a higher number than ours.
+ * Looks for a newer GitHub release. Release tags are `v<major>.<minor>.<patch>`, the same as the app's
+ * versionName, so "newer" means a higher version than ours.
  * It only reads the public releases API; nothing is installed from here.
  */
 object Updater {
     private const val API = "https://api.github.com/repos/AlreadyNoob/pocketscreen/releases/latest"
     private const val AUTO_INTERVAL_MS = 12L * 60 * 60 * 1000
 
-    data class Release(val version: String, val build: Int, val page: String, val notes: String)
+    data class Release(val version: String, val page: String, val notes: String)
 
     sealed class Result {
         data class Newer(val release: Release) : Result()
@@ -40,10 +40,10 @@ object Updater {
             else {
                 val j = JSONObject(con.inputStream.bufferedReader().readText())
                 val tag = j.getString("tag_name").removePrefix("v")
-                val build = tag.substringAfterLast('.').toIntOrNull()
-                if (build == null) Result.Failed("Unrecognised version $tag")
-                else if (build > currentBuild(c))
-                    Result.Newer(Release(tag, build, j.optString("html_url"), j.optString("body")))
+                val theirs = parse(tag)
+                if (theirs == null) Result.Failed("Unrecognised version $tag")
+                else if (compare(theirs, parse(currentVersion(c)) ?: listOf(0, 0, 0)) > 0)
+                    Result.Newer(Release(tag, j.optString("html_url"), j.optString("body")))
                 else Result.UpToDate
             }
         } finally { con.disconnect() }
@@ -51,8 +51,19 @@ object Updater {
         Result.Failed(t.javaClass.simpleName)
     }
 
-    @Suppress("DEPRECATION")
-    private fun currentBuild(c: Context): Int = c.packageManager.getPackageInfo(c.packageName, 0).versionCode
+    private fun currentVersion(c: Context): String =
+        c.packageManager.getPackageInfo(c.packageName, 0).versionName.orEmpty()
+
+    /** "1.2.3" -> [1, 2, 3]; null if it isn't that shape. */
+    private fun parse(v: String): List<Int>? {
+        val p = v.removePrefix("v").split(".").map { it.toIntOrNull() ?: return null }
+        return if (p.size == 3) p else null
+    }
+
+    private fun compare(a: List<Int>, b: List<Int>): Int {
+        for (i in 0 until 3) if (a[i] != b[i]) return a[i].compareTo(b[i])
+        return 0
+    }
 
     /**
      * The automatic check: at most every 12 hours, and a given release is only announced once.
@@ -66,8 +77,8 @@ object Updater {
         Thread {
             val r = check(c)
             if (r !is Result.Failed) p.edit().putLong("last", now).apply()
-            if (r is Result.Newer && p.getInt("seen", 0) < r.release.build) {
-                p.edit().putInt("seen", r.release.build).apply()
+            if (r is Result.Newer && p.getString("seen", "") != r.release.version) {
+                p.edit().putString("seen", r.release.version).apply()
                 onNewer(r.release)
             }
         }.start()

@@ -1,6 +1,6 @@
 # Changelog
 
-Releases are named `v<version>.<build>`: the first two numbers are the version below, the last is the build number (also the app's version code). Each release page shows the notes of its version.
+This file covers the versions up to 0.20, which were named `v<version>.<build>`. From 1.0.0 on, releases are named `v<major>.<minor>.<patch>` and each release page lists what changed.
 
 ## 0.20
 
