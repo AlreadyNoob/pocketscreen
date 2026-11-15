@@ -82,7 +82,7 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(20), dp(10), dp(20), dp(120)) // bottom room for the floating button
+        root.setPadding(dp(20), dp(10), dp(20), dp(130)) // bottom room for the bottom bar
         scroll.addView(root)
         frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         setContentView(frame)
@@ -92,23 +92,15 @@ class MainActivity : Activity() {
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
-        val logo = LogoView(this, 38)
+        val logo = LogoView(this, 44)
         val logoLp = LinearLayout.LayoutParams(-2, -2)
-        logoLp.rightMargin = dp(12)
+        logoLp.rightMargin = dp(14)
         head.addView(logo, logoLp)
-        head.addView(Ui.text(this, "PocketScreen", 26f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
-        val gearBtn = IconView(this, IconView.SETTINGS, 44)
-        gearBtn.tint = Ui.TEXT
-        gearBtn.contentDescription = "Settings"
-        gearBtn.background = Ui.circleRipple()
-        gearBtn.setOnClickListener { showSettings() }
-        head.addView(gearBtn, LinearLayout.LayoutParams(-2, -2))
-        moreBtn = IconView(this, IconView.MORE, 44)
-        moreBtn.tint = Ui.TEXT
-        moreBtn.contentDescription = "More options"
-        moreBtn.background = Ui.circleRipple()
-        moreBtn.setOnClickListener { showMainMenu() }
-        head.addView(moreBtn, LinearLayout.LayoutParams(-2, -2).also { it.leftMargin = dp(2) })
+        val brand = LinearLayout(this)
+        brand.orientation = LinearLayout.VERTICAL
+        brand.addView(Ui.text(this, "PocketScreen", 26f, Ui.TEXT, bold = true))
+        brand.addView(Ui.text(this, "Apps that stay awake", 12.5f, Ui.MUTED))
+        head.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
         Ui.add(root, head, top = 0)
 
         chipsRow = LinearLayout(this)
@@ -138,13 +130,40 @@ class MainActivity : Activity() {
             android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
             intArrayOf(Ui.BG, (Ui.BG and 0x00FFFFFF))
         )
-        frame.addView(fade, FrameLayout.LayoutParams(-1, dp(130), Gravity.BOTTOM))
+        frame.addView(fade, FrameLayout.LayoutParams(-1, dp(150), Gravity.BOTTOM))
 
-        // launch: extended floating action button
-        btnLaunch = Ui.fab(this, "Launch app") { pickApp() }
-        val fl = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        fl.setMargins(0, 0, 0, dp(24))
-        frame.addView(btnLaunch, fl)
+        // bottom bar: settings on the left, the big launch button in the middle, menu on the right
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(dp(8), dp(8), dp(8), dp(8))
+        bar.background = Ui.shape(Ui.SURFACE2, Ui.dpf(this, 38f))
+        bar.elevation = Ui.dpf(this, 10f)
+        fun barItem(kind: Int, label: String, desc: String, onClick: () -> Unit): Pair<LinearLayout, IconView> {
+            val item = LinearLayout(this)
+            item.orientation = LinearLayout.VERTICAL
+            item.gravity = Gravity.CENTER_HORIZONTAL
+            item.setPadding(dp(8), dp(6), dp(8), dp(6))
+            val ic = IconView(this, kind, 28, false)
+            ic.tint = Ui.MUTED
+            item.addView(ic, LinearLayout.LayoutParams(dp(28), dp(28)))
+            item.addView(Ui.text(this, label, 11f, Ui.MUTED, bold = true))
+            item.background = Ui.withRipple(null, Ui.dpf(this, 26f))
+            item.isClickable = true
+            item.contentDescription = desc
+            item.setOnClickListener { onClick() }
+            return Pair(item, ic)
+        }
+        val settingsItem = barItem(IconView.SETTINGS, "Settings", "Settings") { showSettings() }
+        val moreItem = barItem(IconView.MORE, "More", "More options") { showMainMenu() }
+        moreBtn = moreItem.second
+        btnLaunch = Ui.fab(this, "Launch") { pickApp() }
+        bar.addView(settingsItem.first, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(btnLaunch, LinearLayout.LayoutParams(-2, -2))
+        bar.addView(moreItem.first, LinearLayout.LayoutParams(0, -2, 1f))
+        val fl = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM)
+        fl.setMargins(dp(16), 0, dp(16), dp(16))
+        frame.addView(bar, fl)
 
         // running apps and the displays they use, in one list
         runningCount = Ui.text(this, "0 apps", 12f, Ui.MUTED)
@@ -305,12 +324,7 @@ class MainActivity : Activity() {
         val disp = Vd.displays
 
         chipsRow.removeAllViews()
-        val sColor = if (!ping) Ui.BAD else if (!perm || !connected) Ui.WARN else Ui.OK
-        val sTitle = if (!ping) "Shizuku isn't running" else if (!perm) "Permission needed" else if (!connected) "Connecting…" else "Ready"
-        val nDisp = disp.size
-        val sDetail = (if (ping) "Shizuku running" else "Shizuku stopped") + " · " +
-            (if (nDisp == 0) "no displays" else if (nDisp == 1) "1 display" else "$nDisp displays")
-        chipsRow.addView(Ui.statusBar(this, sColor, sTitle, sDetail), LinearLayout.LayoutParams(-1, -2))
+        chipsRow.addView(heroCard(ping, perm, connected, disp.size), LinearLayout.LayoutParams(-1, -2))
 
         helperView.text = when {
             !ping -> "Shizuku isn't running. Start it from wireless debugging, then come back."
@@ -323,6 +337,52 @@ class MainActivity : Activity() {
         btnLaunch.visibility = if (connected) View.VISIBLE else View.GONE
         renderPresets()
         refreshTasks()
+    }
+
+    private var runningN = 0
+    private var heroCount: TextView? = null
+    private var heroLabel: TextView? = null
+
+    private fun heroLabelText(n: Int) = if (n == 1) "app on a hidden display" else "apps on hidden displays"
+
+    /** Dashboard card: the running count in big type, with the three status lines beside it. */
+    private fun heroCard(ping: Boolean, perm: Boolean, connected: Boolean, displays: Int): View {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.HORIZONTAL
+        card.gravity = Gravity.CENTER_VERTICAL
+        card.setPadding(dp(24), dp(22), dp(22), dp(22))
+        card.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 32f))
+        val left = LinearLayout(this)
+        left.orientation = LinearLayout.VERTICAL
+        val cap = Ui.text(this, "RUNNING", 11f, Ui.ON_ACCENT_CONT, bold = true)
+        cap.letterSpacing = 0.12f
+        cap.alpha = 0.75f
+        left.addView(cap)
+        val count = Ui.text(this, runningN.toString(), 52f, Ui.ON_ACCENT_CONT, bold = true)
+        heroCount = count
+        left.addView(count)
+        val lab = Ui.text(this, heroLabelText(runningN), 12.5f, Ui.ON_ACCENT_CONT)
+        lab.alpha = 0.8f
+        heroLabel = lab
+        left.addView(lab)
+        card.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
+        val right = LinearLayout(this)
+        right.orientation = LinearLayout.VERTICAL
+        fun line(color: Int, text: String, top: Int) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.addView(Ui.dot(this, color, 8), LinearLayout.LayoutParams(dp(8), dp(8)).also { it.rightMargin = dp(8) })
+            r.addView(Ui.text(this, text, 13f, Ui.ON_ACCENT_CONT, bold = true))
+            Ui.add(right, r, top = top, w = ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        line(if (!ping) Ui.BAD else if (!perm) Ui.WARN else Ui.OK,
+            "Shizuku " + (if (!ping) "stopped" else if (!perm) "no access" else "running"), 0)
+        line(if (connected) Ui.OK else if (perm) Ui.WARN else Ui.BAD,
+            "Service " + (if (connected) "connected" else if (perm) "connecting" else "offline"), 10)
+        line(Ui.ON_ACCENT_CONT, "$displays " + (if (displays == 1) "display" else "displays"), 10)
+        card.addView(right, LinearLayout.LayoutParams(-2, -2))
+        return card
     }
 
     private fun grant() {
@@ -395,57 +455,59 @@ class MainActivity : Activity() {
         presetsBox.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return
         presetsCount.text = "${list.size} saved"
-        val rows = ArrayList<View>()
+        val tiles = ArrayList<View>()
         for ((pkg, landscape) in list) {
-            val row = listRow()
-            row.setOnClickListener { launchApp(pkg, landscape) } // one tap: start it now
-            row.setPadding(dp(16), dp(12), dp(10), dp(12))
-            row.addView(appIcon(pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
-
             val cfg = Vd.appCfg(this, pkg)
             val sz = Vd.sizeFor(this, landscape, cfg)
-            val col = LinearLayout(this)
-            col.orientation = LinearLayout.VERTICAL
-            val name = Ui.text(this, Apps.label(this, pkg), 16f, Ui.TEXT, bold = true)
+            val tile = FrameLayout(this)
+            tile.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 28f)), Ui.dpf(this, 28f))
+            tile.isClickable = true
+            tile.isFocusable = true
+            tile.setOnClickListener { launchApp(pkg, landscape) } // one tap: start it now
+            Ui.pressable(tile, 0.97f)
+            val inner = LinearLayout(this)
+            inner.orientation = LinearLayout.VERTICAL
+            inner.setPadding(dp(18), dp(18), dp(18), dp(18))
+            inner.addView(appIcon(pkg), LinearLayout.LayoutParams(dp(56), dp(56)))
+            val name = Ui.text(this, Apps.label(this, pkg), 15f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
-            val nameRow = LinearLayout(this)
-            nameRow.orientation = LinearLayout.HORIZONTAL
-            nameRow.gravity = Gravity.CENTER_VERTICAL
-            nameRow.addView(name, LinearLayout.LayoutParams(-2, -2))
-            if (cfg != null) {
-                val custom = Ui.pill(this, "Custom", Ui.ACCENT, Ui.ACCENT_CONT, 11f)
-                custom.setPadding(dp(7), dp(3), dp(7), dp(3))
-                nameRow.addView(custom, LinearLayout.LayoutParams(-2, -2).also { it.leftMargin = dp(7) })
-            }
-            col.addView(nameRow)
-            col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} DPI", 11.5f, Ui.MUTED)
+            Ui.add(inner, name, top = 14)
+            inner.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second}", 11.5f, Ui.MUTED)
                 .also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
-            val cp = LinearLayout.LayoutParams(0, -2, 1f)
-            cp.leftMargin = dp(14)
-            row.addView(col, cp)
-
-            val play = IconView(this, IconView.PLAY, 40, false)
-            play.tint = Ui.ON_ACCENT
-            play.background = Ui.withRipple(Ui.shape(Ui.ACCENT, Ui.dpf(this, 20f)), Ui.dpf(this, 20f))
-            play.isClickable = true
-            play.contentDescription = "Launch"
-            play.setOnClickListener { launchApp(pkg, landscape) }
-            row.addView(play, LinearLayout.LayoutParams(dp(40), dp(40)).also { it.rightMargin = dp(4) })
-
+            val meta = LinearLayout(this)
+            meta.orientation = LinearLayout.HORIZONTAL
+            meta.gravity = Gravity.CENTER_VERTICAL
+            meta.addView(Ui.text(this, "${sz.third} DPI", 11.5f, Ui.MUTED))
+            if (cfg != null) {
+                val custom = Ui.pill(this, "Custom", Ui.ACCENT, Ui.ACCENT_CONT, 10f)
+                custom.setPadding(dp(8), dp(2), dp(8), dp(2))
+                meta.addView(custom, LinearLayout.LayoutParams(-2, -2).also { it.leftMargin = dp(8) })
+            }
+            Ui.add(inner, meta, top = 4)
+            tile.addView(inner, FrameLayout.LayoutParams(-1, -2))
             val more = moreButton()
-            more.background = null
-            more.tint = Ui.MUTED
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("App Settings") { showAppSettings(pkg, landscape) },
                     Ui.MenuItem("Remove", danger = true) { Vd.removePreset(this, pkg); renderPresets() }
                 ))
             }
-            row.addView(more)
-            rows.add(row)
+            tile.addView(more, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.END).also {
+                it.topMargin = dp(8); it.rightMargin = dp(8)
+            })
+            tiles.add(tile)
         }
-        Ui.list(presetsBox, rows)
+        var k = 0
+        while (k < tiles.size) {
+            val pair = LinearLayout(this)
+            pair.orientation = LinearLayout.HORIZONTAL
+            pair.addView(tiles[k], LinearLayout.LayoutParams(0, -1, 1f))
+            val second: View = if (k + 1 < tiles.size) tiles[k + 1] else View(this)
+            pair.addView(second, LinearLayout.LayoutParams(0, -1, 1f).also { it.leftMargin = dp(12) })
+            Ui.add(presetsBox, pair, top = if (k == 0) 0 else 12)
+            k += 2
+        }
     }
 
     private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String)
@@ -619,9 +681,12 @@ class MainActivity : Activity() {
         val disp = allDisp.filter { it.id !in hidingDisplays }
         tasksBox.removeAllViews()
         runningCount.text = list.map { it.pkg }.distinct().size.let { "$it ${if (it == 1) "app" else "apps"}" }
+        runningN = list.map { it.pkg }.distinct().size
+        heroCount?.text = runningN.toString()
+        heroLabel?.text = heroLabelText(runningN)
         val empty = disp.filter { d -> allRows.none { it.display.id == d.id } }
         if (list.isEmpty() && empty.isEmpty() && crashes.isEmpty() && stops.isEmpty()) {
-            tasksBox.addView(emptyNote("Tap Launch app to start one on a hidden display."))
+            tasksBox.addView(emptyNote("Tap Launch below to start one on a hidden display."))
             return
         }
         fun detail(d: Vd.Disp) = "${if (d.landscape) "Landscape" else "Portrait"} · ${d.w}×${d.h}" +
@@ -637,60 +702,77 @@ class MainActivity : Activity() {
         for (r in list) {
             val outer = LinearLayout(this)
             outer.orientation = LinearLayout.VERTICAL
+            outer.setPadding(dp(18), dp(18), dp(18), dp(16))
             outer.isClickable = true
             outer.setOnClickListener { openViewer(r.display.id) }
-            val row = listRow()
-            row.addView(appIcon(r.pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
+            val muted = Vd.isMuted(this, r.pkg)
+            val shared = list.count { it.display.id == r.display.id } > 1
+            fun stopApp() {
+                hidePkg(r.pkg)
+                bg {
+                    log(Vd.stopAppAndDisplay(applicationContext, r.pkg))
+                    runOnUiThread { refresh() }
+                }
+            }
+            outer.setOnLongClickListener {
+                Ui.menu(this, it, listOf(
+                    Ui.MenuItem("App Settings") { showAppSettings(r.pkg, r.display.landscape) },
+                    Ui.MenuItem("Stop App", danger = true) { stopApp() }
+                ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
+                true
+            }
 
+            // who: icon, name, where it runs, time left
+            val top = LinearLayout(this)
+            top.orientation = LinearLayout.HORIZONTAL
+            top.gravity = Gravity.CENTER_VERTICAL
+            top.addView(appIcon(r.pkg), LinearLayout.LayoutParams(dp(52), dp(52)))
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
-            val name = Ui.text(this, Apps.label(this, r.pkg), 16f, Ui.TEXT, bold = true)
+            val name = Ui.text(this, Apps.label(this, r.pkg), 17f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
-            col.addView(Ui.text(this, "Display #${r.display.id} · ${if (r.display.landscape) "Landscape" else "Portrait"} · ${r.display.w}×${r.display.h}", 11.5f, Ui.MUTED)
+            col.addView(Ui.text(this, "Display #${r.display.id} · ${if (r.display.landscape) "Landscape" else "Portrait"} · ${r.display.w}×${r.display.h}", 12f, Ui.MUTED)
                 .also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
-            val muted = Vd.isMuted(this, r.pkg)
-            val pills = LinearLayout(this)
-            pills.orientation = LinearLayout.HORIZONTAL
-            fun addPill(label: String, fg: Int, bg: Int) {
-                val p = Ui.pill(this, label, fg, bg, 11f)
-                p.isSingleLine = true
-                p.setPadding(dp(9), dp(5), dp(9), dp(5))
-                p.background = Ui.shape(bg, Ui.dpf(this, 14f))
-                val lp = LinearLayout.LayoutParams(-2, -2)
-                if (pills.childCount > 0) lp.leftMargin = dp(6)
-                pills.addView(p, lp)
+            top.addView(col, LinearLayout.LayoutParams(0, -2, 1f).also { it.leftMargin = dp(14) })
+            (Vd.remainingText(this, r.pkg) ?: Vd.sessionText(this, r.pkg)?.let { "Running $it" })?.let { t ->
+                val pill = Ui.pill(this, t, Ui.ACCENT, Ui.ACCENT_CONT, 11f)
+                pill.isSingleLine = true
+                top.addView(pill, LinearLayout.LayoutParams(-2, -2).also { it.leftMargin = dp(8) })
             }
-            (Vd.remainingText(this, r.pkg) ?: Vd.sessionText(this, r.pkg)?.let { "Running $it" })
-                ?.let { addPill(it, Ui.ACCENT, Ui.ACCENT_CONT) }
-            stats[r.pkg]?.let { st ->
-                val parts = ArrayList<String>()
-                st.memMb?.let { parts.add("$it MB") }
-                st.cpu?.let { parts.add("${if (it < 10) String.format("%.1f", it) else it.toInt().toString()}% CPU") }
-                if (parts.isNotEmpty()) addPill(parts.joinToString(" · "), Ui.MUTED, Ui.SURFACE2)
-            }
-            addPill(if (muted) "Muted" else hzText(r.display.fps), Ui.MUTED, Ui.SURFACE2)
-            val cp = LinearLayout.LayoutParams(0, -2, 1f)
-            cp.leftMargin = dp(14)
-            row.addView(col, cp)
+            outer.addView(top)
 
-            val shared = list.count { it.display.id == r.display.id } > 1
-            val more = moreButton()
-            more.setOnClickListener {
-                Ui.menu(this, more, listOf(
-                    Ui.MenuItem("App Settings") { showAppSettings(r.pkg, r.display.landscape) },
-                    Ui.MenuItem("Stop App", danger = true) {
-                        hidePkg(r.pkg)
-                        bg {
-                            log(Vd.stopAppAndDisplay(applicationContext, r.pkg))
-                            runOnUiThread { refresh() }
-                        }
-                    }
-                ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
+            // numbers: memory, CPU, refresh rate (and sound when muted)
+            val st = stats[r.pkg]
+            val facts = ArrayList<Pair<String, String>>()
+            st?.memMb?.let { facts.add(Pair("Memory", "$it MB")) }
+            st?.cpu?.let { facts.add(Pair("CPU", "${if (it < 10) String.format("%.1f", it) else it.toInt().toString()}%")) }
+            facts.add(Pair("Refresh", hzText(r.display.fps)))
+            if (muted) facts.add(Pair("Sound", "Muted"))
+            val strip = LinearLayout(this)
+            strip.orientation = LinearLayout.HORIZONTAL
+            for ((fi, f) in facts.withIndex()) {
+                val cell = LinearLayout(this)
+                cell.orientation = LinearLayout.VERTICAL
+                cell.setPadding(dp(12), dp(10), dp(12), dp(10))
+                cell.background = Ui.shape(Ui.SURFACE2, Ui.dpf(this, 16f))
+                cell.addView(Ui.text(this, f.first, 11f, Ui.MUTED))
+                val v = Ui.text(this, f.second, 14f, Ui.TEXT, bold = true)
+                v.isSingleLine = true
+                cell.addView(v)
+                strip.addView(cell, LinearLayout.LayoutParams(0, -2, 1f).also { if (fi > 0) it.leftMargin = dp(8) })
             }
-            val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME, 34)
-            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 17f)), Ui.dpf(this, 17f))
+            Ui.add(outer, strip, top = 16)
+            Vd.limitsText(this, r.pkg)?.let { Ui.add(outer, Ui.text(this, it, 11.5f, Ui.MUTED), top = 10) }
+
+            // actions: open, mute, app settings, stop
+            val actions = LinearLayout(this)
+            actions.orientation = LinearLayout.HORIZONTAL
+            actions.gravity = Gravity.CENTER_VERTICAL
+            actions.addView(Ui.smallButton(this, "Open", Ui.Kind.FILLED) { openViewer(r.display.id) }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME, 44)
+            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 22f)), Ui.dpf(this, 22f))
             muteBtn.tint = if (muted) Ui.MUTED else Ui.ACCENT
             muteBtn.contentDescription = if (muted) "Unmute sound" else "Mute sound"
             muteBtn.setOnClickListener {
@@ -700,22 +782,15 @@ class MainActivity : Activity() {
                     runOnUiThread { refreshTasks() }
                 }
             }
-            row.addView(muteBtn, LinearLayout.LayoutParams(-2, -2).also { it.rightMargin = dp(8) })
-            row.addView(more)
-            outer.addView(row)
-            val limits = Vd.limitsText(this, r.pkg)
-            if (pills.childCount > 0 || limits != null) {
-                row.setPadding(dp(16), dp(16), dp(12), if (pills.childCount > 0) 0 else dp(8))
-                if (pills.childCount > 0) {
-                    pills.setPadding(dp(16), dp(12), dp(16), if (limits != null) dp(8) else dp(16))
-                    outer.addView(pills, LinearLayout.LayoutParams(-1, -2))
-                }
-                if (limits != null) {
-                    val lt = Ui.text(this, limits, 11f, Ui.MUTED)
-                    lt.setPadding(dp(16), 0, dp(16), dp(16))
-                    outer.addView(lt, LinearLayout.LayoutParams(-1, -2))
-                }
-            }
+            actions.addView(muteBtn, LinearLayout.LayoutParams(dp(44), dp(44)).also { it.leftMargin = dp(8) })
+            val setBtn = IconView(this, IconView.SETTINGS, 44)
+            setBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 22f)), Ui.dpf(this, 22f))
+            setBtn.tint = Ui.TEXT
+            setBtn.contentDescription = "App settings"
+            setBtn.setOnClickListener { showAppSettings(r.pkg, r.display.landscape) }
+            actions.addView(setBtn, LinearLayout.LayoutParams(dp(44), dp(44)).also { it.leftMargin = dp(8) })
+            actions.addView(Ui.smallButton(this, "Stop", Ui.Kind.DANGER) { stopApp() }, LinearLayout.LayoutParams(-2, dp(44)).also { it.leftMargin = dp(8) })
+            Ui.add(outer, actions, top = 16)
             rows.add(outer)
         }
 
@@ -1154,7 +1229,7 @@ class MainActivity : Activity() {
             items.add(Ui.MenuItem("Stop All", danger = true) { confirmStopAll() })
         }
         items.add(Ui.MenuItem("PocketScreen $versionName"))
-        Ui.menu(this, moreBtn, items)
+        Ui.menu(this, moreBtn, items, above = true)
     }
 
     /** Title + subtitle on the left, [trailing] view (switch, value, chevron) on the right. */

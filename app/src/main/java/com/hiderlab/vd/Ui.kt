@@ -551,7 +551,7 @@ object Ui {
     class MenuItem(val label: String, val danger: Boolean = false, val action: (() -> Unit)? = null)
 
     /** A rounded dropdown menu under [anchor]. An item with no action is shown as a muted label. */
-    fun menu(a: Activity, anchor: View, items: List<MenuItem>) {
+    fun menu(a: Activity, anchor: View, items: List<MenuItem>, above: Boolean = false) {
         val box = LinearLayout(a)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(a, 6), dp(a, 6), dp(a, 6), dp(a, 6))
@@ -582,8 +582,17 @@ object Ui {
             box.addView(t, LinearLayout.LayoutParams(-1, -2))
         }
         box.alpha = 0f
-        box.translationY = -dpf(a, 10f)
-        pw.showAsDropDown(anchor, 0, 0, Gravity.END)
+        if (above) {
+            box.measure(
+                View.MeasureSpec.makeMeasureSpec(dp(a, 248), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            box.translationY = dpf(a, 10f)
+            pw.showAsDropDown(anchor, 0, -(anchor.height + box.measuredHeight + dp(a, 10)), Gravity.END)
+        } else {
+            box.translationY = -dpf(a, 10f)
+            pw.showAsDropDown(anchor, 0, 0, Gravity.END)
+        }
         box.animate().alpha(1f).translationY(0f).setDuration(160).setInterpolator(DecelerateInterpolator()).start()
     }
 
