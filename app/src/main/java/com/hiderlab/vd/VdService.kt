@@ -39,7 +39,7 @@ class VdService : IVdService.Stub() {
         val dm: Any,
         val cb: Any
     ) {
-        var outputSurface: Surface? = null
+        var viewerSurface: Surface? = null
         /** Keeps this display's power group awake; see [keepAwake]. */
         var wakeToken: IBinder? = null
     }
@@ -99,15 +99,20 @@ class VdService : IVdService.Stub() {
 
     /**
      * A trusted virtual display has no keyboard of its own, so Android falls back to showing the
-     * keyboard of any app on it on the phone's main screen. Setting the display's IME policy to
-     * "hide" stops that. Keys can still be sent into the display through [key], [keyEvent] and [typeText].
+     * keyboard of any app on it (Termux, a browser...) on the phone's main screen. Setting the
+     * display's IME policy to "hide" stops that. The viewer is unaffected: it types through its
+     * own window and sends the keys into the display.
      */
     private fun hideImeOnDisplay(id: Int) {
-        val r = applyImePolicy(id)
+        val r = applyImePolicy(id, false)
         if (r != "OK") lastError = "ime policy: $r"
     }
 
-    private fun applyImePolicy(id: Int): String = try {
+    /**
+     * local = true: the display gets its own keyboard, so an app that focuses a text box raises it on
+     * the display and resizes for it, as on a phone. false: no keyboard on the display (see above).
+     */
+    private fun applyImePolicy(id: Int, local: Boolean): String = try {
         val binder = Class.forName("android.os.ServiceManager")
             .getMethod("getService", String::class.java).invoke(null, "window") as IBinder
         val wm = Class.forName("android.view.IWindowManager\$Stub")
@@ -115,16 +120,32 @@ class VdService : IVdService.Stub() {
         val intT = Int::class.javaPrimitiveType
         val m = wm.javaClass.methods.firstOrNull { it.name == "setDisplayImePolicy" && it.parameterCount == 2 }
         if (m != null) {
-            m.invoke(wm, id, 2) // DISPLAY_IME_POLICY_HIDE
+            m.invoke(wm, id, if (local) 0 else 2) // DISPLAY_IME_POLICY_LOCAL / _HIDE
         } else {
             // Android 10: the same switch is a boolean.
-            wm.javaClass.getMethod("setShouldShowIme", intT, Boolean::class.javaPrimitiveType).invoke(wm, id, false)
+            wm.javaClass.getMethod("setShouldShowIme", intT, Boolean::class.javaPrimitiveType).invoke(wm, id, local)
         }
         "OK"
     } catch (t: Throwable) {
         val why = unwrap(t).toString().take(150)
         Log.w("VdService", "Could not set the keyboard policy on display $id: $why")
         why
+    }
+
+    override fun setImePolicy(id: Int, local: Boolean): String {
+        if (displays[id] == null) return "no such display"
+        return applyImePolicy(id, local)
+    }
+
+    override fun resize(id: Int, w: Int, h: Int): String {
+        val vd = displays[id] ?: return "no such display"
+        return try {
+            Class.forName("android.hardware.display.IDisplayManager")
+                .getMethod("resizeVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"),
+                    Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .invoke(vd.dm, vd.cb, w, h, vd.dpi)
+            "OK"
+        } catch (t: Throwable) { unwrap(t).toString().take(150) }
     }
 
     override fun releaseDisplay(id: Int): String {
@@ -160,8 +181,8 @@ class VdService : IVdService.Stub() {
             .firstOrNull { it.name == "setVirtualDisplaySurface" }
             ?: error("setVirtualDisplaySurface not found")
         m.invoke(vd.dm, vd.cb, target)
-        val old = vd.outputSurface
-        vd.outputSurface = s
+        val old = vd.viewerSurface
+        vd.viewerSurface = s
         if (old != null && old !== s) try { old.release() } catch (_: Throwable) {}
     }
 
@@ -439,7 +460,7 @@ class VdService : IVdService.Stub() {
                 .getMethod("releaseVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"))
                 .invoke(vd.dm, vd.cb)
         } catch (_: Throwable) {}
-        try { vd.outputSurface?.release() } catch (_: Throwable) {}
+        try { vd.viewerSurface?.release() } catch (_: Throwable) {}
         try { vd.reader.close() } catch (_: Throwable) {}
         try { vd.thread.quitSafely() } catch (_: Throwable) {}
     }

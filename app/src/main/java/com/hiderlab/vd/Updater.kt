@@ -56,7 +56,7 @@ object Updater {
 
     /**
      * The automatic check: at most every 12 hours, and a given release is only announced once.
-     * Calls [onNewer] (on a background thread) when there is a release not yet reported.
+     * Calls [onNewer] (on a background thread) when there is something new to show.
      */
     fun autoCheck(c: Context, onNewer: (Release) -> Unit) {
         if (!autoEnabled(c)) return

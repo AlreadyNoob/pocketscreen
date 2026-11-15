@@ -6,7 +6,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Debug log. Written to a file only when enabled. */
+/** Debug log. Never shown on screen. Written to a file only when the user turns it on in Settings. */
 object Debug {
     private const val MAX_BYTES = 400_000L
     @Volatile private var ctx: Context? = null

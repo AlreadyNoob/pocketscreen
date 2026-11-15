@@ -9,7 +9,7 @@ import android.os.IBinder
 import rikka.shizuku.Shizuku
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** App-side connection to the Shizuku service. */
+/** App-side connection to the Shizuku service. Shared by the UI, viewer and notification. */
 object Vd {
     /**
      * Orientation each display was asked for. The shape alone can't tell a square display (a custom
@@ -17,8 +17,13 @@ object Vd {
      */
     private val requestedLandscape = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
 
+    /** Displays whose keyboard policy was set to "local" (the keyboard appears on the display itself). */
+    private val imeLocal = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+    fun hasDisplayKeyboard(id: Int): Boolean = imeLocal[id] == true
+
     data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0, val fps: Int = 0) {
         val landscape: Boolean get() = if (w != h) w > h else requestedLandscape[id] == true
+        val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
     }
 
     private const val LAUNCH_FLAGS = 0x10000000 // FLAG_ACTIVITY_NEW_TASK only, so the task can appear in Recents
@@ -29,8 +34,26 @@ object Vd {
     @Volatile private var binding = false
 
     val listeners = CopyOnWriteArrayList<Runnable>()
+    @Volatile var logSink: ((String) -> Unit)? = null
 
-    fun log(s: String) { Debug.write(s) }
+    /**
+     * For the on-display keyboard: what Android says about the keyboard a few seconds after an app
+     * starts on the display, and again later (the viewer is usually open by then). Read-only, debug log only.
+     */
+    private fun logKeyboardState(display: Int) {
+        Thread {
+            for (wait in longArrayOf(3500L, 5000L)) {
+                try { Thread.sleep(wait) } catch (_: InterruptedException) { return@Thread }
+                log("keyboard state for display #$display:\n" + exec(
+                    "echo '-- input_method'; dumpsys input_method | grep -E 'mCurFocusedWindow|mCurId|mCurTokenDisplayId|mInputShown|mShowRequested|mImeWindowVis|mCurClient|mCurVirtualDisplayToken' | cut -c1-220; " +
+                    "echo '-- window ime'; dumpsys window | grep -E 'mInputMethodTarget|mImeLayeringTarget|mImeControlTarget|mInputMethodWindow|InputMethod' | cut -c1-220; " +
+                    "echo '-- window displays'; dumpsys window displays | grep -iE 'ime|Display: mDisplayId=$display|systemDecor|shouldShow' | cut -c1-220; " +
+                    "echo '-- display'; dumpsys display | grep -iE 'hiderlab' | cut -c1-400"))
+            }
+        }.start()
+    }
+
+    fun log(s: String) { Debug.write(s); logSink?.invoke(s) }
     fun changed() { listeners.forEach { try { it.run() } catch (_: Throwable) {} } }
 
     private val conn = object : ServiceConnection {
@@ -101,7 +124,7 @@ object Vd {
 
     private fun mutePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("mute", Context.MODE_PRIVATE)
 
-    /** Apps muted whenever they run on a hidden display. Saved on the phone. */
+    /** Apps the user wants muted whenever they run on a hidden display. Saved on the phone. */
     fun mutedApps(ctx: Context): Set<String> = mutePrefs(ctx).getStringSet("pkgs", emptySet()) ?: emptySet()
 
     fun isMuted(ctx: Context, pkg: String): Boolean = pkg in mutedApps(ctx)
@@ -138,9 +161,10 @@ object Vd {
         if (isMuted(ctx, pkg)) applyAudio(pkg, false)
     }
 
-    /** Gives sound back to every muted app and clears the saved choice. */
+    /** Gives sound back to every muted app and clears the saved choice, so the mute icons show it too. */
     fun restoreAllAudio(ctx: Context): String =
         mutedApps(ctx).toList().joinToString("\n") { "$it: " + setMuted(ctx, it, false).lines().lastOrNull().orEmpty() }
+            .ifEmpty { "No muted apps." }
 
     /** Re-applies the saved sound state; used shortly after launch, once the app's process exists. */
     fun syncAudio(ctx: Context, pkg: String): String = applyAudio(pkg, isMuted(ctx, pkg))
@@ -192,7 +216,7 @@ object Vd {
                 if (name in pkgs) cpuByPkg[name] = (cpuByPkg[name] ?: 0.0) + (m.groupValues[1].toDoubleOrNull() ?: 0.0)
             }
         } catch (_: Throwable) {}
-        // dumpsys cpuinfo counts one full core as 100%, so 130% means 1.3 cores. Converted to a share of the whole CPU.
+        // dumpsys cpuinfo counts one full core as 100%, so 130% means 1.3 cores. Show share of the whole CPU.
         val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val res = HashMap<String, Stat>()
         for (pkg in pkgs) {
@@ -206,6 +230,32 @@ object Vd {
         }
         return res
     }
+
+    // ---- quick launch presets ----
+
+    private fun presetPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("presets", Context.MODE_PRIVATE)
+
+    /** Saved apps for one-tap launch: package and orientation, in the order they were saved. */
+    fun presets(ctx: Context): List<Pair<String, Boolean>> =
+        (presetPrefs(ctx).getString("list", "") ?: "").lines().mapNotNull {
+            val p = it.split("|")
+            if (p.size == 2 && p[0].isNotEmpty()) p[0] to (p[1] == "1") else null
+        }
+
+    fun presetOf(ctx: Context, pkg: String): Boolean? = presets(ctx).firstOrNull { it.first == pkg }?.second
+
+    private fun writePresets(ctx: Context, l: List<Pair<String, Boolean>>) {
+        presetPrefs(ctx).edit().putString("list", l.joinToString("\n") { "${it.first}|${if (it.second) 1 else 0}" }).apply()
+    }
+
+    fun savePreset(ctx: Context, pkg: String, landscape: Boolean) {
+        val l = presets(ctx).toMutableList()
+        val i = l.indexOfFirst { it.first == pkg }
+        if (i >= 0) l[i] = pkg to landscape else l.add(pkg to landscape)
+        writePresets(ctx, l)
+    }
+
+    fun removePreset(ctx: Context, pkg: String) { writePresets(ctx, presets(ctx).filter { it.first != pkg }) }
 
     // ---- session time ----
 
@@ -244,7 +294,7 @@ object Vd {
         e.apply()
     }
 
-    /** After a clock limit was changed: running apps get their next stop moment from now. */
+    /** After a clock limit was changed in Settings: running apps get their next stop moment from now. */
     fun refreshDeadlines(ctx: Context) {
         for (pkg in sessionPrefs(ctx).all.keys) setDeadline(ctx, pkg)
     }
@@ -253,6 +303,29 @@ object Vd {
     fun deadline(ctx: Context, pkg: String): Long? {
         if (AppSettings.effectiveAt(ctx, pkg) <= 0) return null
         return deadlinePrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+    }
+
+    fun clockText(ctx: Context, minuteOfDay: Int): String {
+        val c = java.util.Calendar.getInstance()
+        c.set(java.util.Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+        c.set(java.util.Calendar.MINUTE, minuteOfDay % 60)
+        return android.text.format.DateFormat.getTimeFormat(ctx).format(c.time)
+    }
+
+    /** Battery, temperature and clock limits that apply to [pkg], as "35% battery · 45°C · 7:00 AM". Null if none. */
+    fun limitsText(ctx: Context, pkg: String): String? {
+        val parts = ArrayList<String>()
+        AppSettings.effectiveBattery(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it% battery") }
+        AppSettings.effectiveTemp(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it°C") }
+        deadline(ctx, pkg)?.let { parts.add(deadlineText(ctx, it)) }
+        return if (parts.isEmpty()) null else "Stops at " + parts.joinToString(" · ")
+    }
+
+    /** "7:00 AM", or "tomorrow 7:00 AM" when it isn't today. */
+    fun deadlineText(ctx: Context, at: Long): String {
+        val clock = android.text.format.DateFormat.getTimeFormat(ctx).format(java.util.Date(at))
+        val day = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+        return if (day.format(java.util.Date(at)) == day.format(java.util.Date())) clock else "tomorrow $clock"
     }
 
     /** When [pkg]'s current session started (ms since epoch), or null if unknown. */
@@ -264,9 +337,38 @@ object Vd {
         return if (t <= 0L) null else ((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0)
     }
 
+    /** Minutes as "5m" / "2h 10m". */
+    fun fmtMinutes(mins: Long): String = when {
+        mins < 1 -> "<1m"
+        mins < 60 -> "${mins}m"
+        else -> "${mins / 60}h ${mins % 60}m"
+    }
+
+    /** How long [pkg] has been running here, as "5m" / "2h 10m", or null if unknown. */
+    fun sessionText(ctx: Context, pkg: String): String? {
+        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        if (t <= 0L) return null
+        return fmtMinutes(((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0))
+    }
+
+    /**
+     * Time left before auto-stop, as "18m left" / "1h 5m left", or null when no time limit applies
+     * to [pkg] (neither its own nor the default) or the start time is unknown.
+     */
+    fun remainingText(ctx: Context, pkg: String): String? {
+        val limit = AppSettings.effectiveMinutes(ctx, pkg)
+        if (limit <= 0) return null
+        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        if (t <= 0L) return null
+        val leftMs = limit * 60000L - (System.currentTimeMillis() - t)
+        if (leftMs <= 0L) return "stopping soon"
+        val mins = (leftMs + 59999L) / 60000L
+        return "${fmtMinutes(mins)} left"
+    }
+
     // ---- display size settings ----
 
-    /** Size of new hidden displays. Saved on the phone, applies to displays created from now on. */
+    /** How big new hidden displays are. Saved on the phone, applies to displays created from now on. */
     data class SizeCfg(val matchRatio: Boolean, val width: Int, val customH: Int, val dpi: Int)
 
     const val DEF_WIDTH = 720
@@ -360,12 +462,17 @@ object Vd {
         if (r.startsWith("OK:")) {
             id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
             if (id >= 0) requestedLandscape[id] = landscape
+            if (id >= 0 && AppSettings.onDisplayKeyboard(ctx)) {
+                val k = try { s.setImePolicy(id, true) } catch (t: Throwable) { "ERR: $t" }
+                log("keyboard on display #$id: $k")
+                if (k == "OK") imeLocal[id] = true
+            }
             refreshInfo()
             if (fps > 0) log("display #$id refresh as Android reports it:\n" +
                 exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
             try {
-                ctx.applicationContext.startService(Intent(ctx.applicationContext, HostService::class.java))
-            } catch (t: Throwable) { log("Host service not started: $t") }
+                ctx.applicationContext.startForegroundService(Intent(ctx.applicationContext, HostService::class.java))
+            } catch (t: Throwable) { log("Notification service not started: $t") }
         }
         changed()
         return id
@@ -382,14 +489,14 @@ object Vd {
     fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
         // Only reuse a display that already has exactly the size and refresh rate a new one would get now.
         val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
-        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
+        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && hasDisplayKeyboard(it.id) == AppSettings.onDisplayKeyboard(ctx) && tasks(it.id).isEmpty() }?.id
             ?: createDisplay(ctx, landscape, cfg, fps)
     }
 
     fun launch(ctx: Context, pkg: String, display: Int): String {
         val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
             ?: return "No launcher activity for $pkg"
-        // Apps always start with sound on.
+        // Apps always start with sound on. Mute again from the app's menu if wanted.
         setMutedPref(ctx, pkg, false)
         applyAudio(pkg, false)
         markSession(ctx, pkg)
@@ -403,12 +510,13 @@ object Vd {
             if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
-        // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off. Android only reads
+        // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off in Settings. Android only reads
         // EXCLUDE_FROM_RECENTS when it creates or resets a task. If the app already has a leftover task
         // (still listed in Recents from an earlier run), the flag is ignored and the entry stays.
         // CLEAR_TASK resets that task so the flag takes effect on it too.
         val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 or 0x00008000 else LAUNCH_FLAGS // EXCLUDE_FROM_RECENTS | CLEAR_TASK
         val started = exec("am start --display $display -f $flags -n $comp")
+        if (hasDisplayKeyboard(display) && Debug.enabled(ctx)) logKeyboardState(display)
         return started
     }
 
@@ -435,7 +543,7 @@ object Vd {
 
     // ---- apps stopped by an auto-stop limit ----
 
-    /** [kind] is "temperature", "battery", "timer" or "clock"; [ranMin] is how long the app had been running. */
+    /** [kind] is "Temperature", "Battery" or "Timer"; [ranMin] is how long the app had been running. */
     data class AutoStop(val pkg: String, val whenMs: Long, val ranMin: Long, val kind: String, val detail: String, val landscape: Boolean)
 
     private fun stopPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("autostops", Context.MODE_PRIVATE)
@@ -446,7 +554,7 @@ object Vd {
         stopPrefs(ctx).edit().putString(pkg, listOf(System.currentTimeMillis(), ran, if (land) 1 else 0, kind, detail).joinToString("|")).apply()
     }
 
-    /** Kept until cleared with [clearAutoStop] or the app is launched again. */
+    /** Kept until the user dismisses or relaunches the app. */
     fun autoStops(ctx: Context): List<AutoStop> = stopPrefs(ctx).all.mapNotNull { (pkg, v) ->
         val p = (v as? String)?.split("|", limit = 5) ?: return@mapNotNull null
         val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
@@ -457,6 +565,7 @@ object Vd {
 
     fun clearCrash(ctx: Context, pkg: String) {
         crashPrefs(ctx).edit().remove(pkg).apply()
+        HostService.cancelCrash(ctx, pkg) // the notification goes away with the entry
     }
 
     /** Why the system says [pkg]'s last process ended, e.g. "CRASH" or "EXIT_SELF". Null if it can't be read. */
@@ -476,7 +585,7 @@ object Vd {
         if (service == null) return emptyList()
         val found = ArrayList<Crash>()
         val now = System.currentTimeMillis()
-        // An app that is running again is no longer recorded as closed.
+        // An app that is running again (for example opened from the app drawer) is no longer "closed".
         for (c in crashes(ctx)) {
             val p = exec("pidof ${c.pkg}").trim()
             if (p.firstOrNull()?.isDigit() == true) clearCrash(ctx, c.pkg)
@@ -486,7 +595,7 @@ object Vd {
         for ((pkg, v) in sessionPrefs(ctx).all) {
             val started = v as? Long ?: continue
             if (pkg in onDisplays || pkg in busy || now - started < 10_000L) continue
-            if (pkg in onMain) { // moved to the main screen: a hand-off, not a crash
+            if (pkg in onMain) { // the user moved it to the main screen: a hand-off, not a crash
                 clearSession(ctx, pkg)
                 restoreAudio(ctx, pkg)
                 clearCrash(ctx, pkg)
@@ -499,7 +608,7 @@ object Vd {
             clearSession(ctx, pkg)
             restoreAudio(ctx, pkg)
             if (reason != null && reason in EXPECTED_EXITS) continue
-            val c = Crash(pkg, now, reason ?: "unknown",
+            val c = Crash(pkg, now, reason?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Reason unknown",
                 orientPrefs(ctx).getBoolean(pkg, false))
             crashPrefs(ctx).edit().putString(pkg, "${c.whenMs}|${if (c.landscape) 1 else 0}|${c.reason}").apply()
             log("Unexpected exit: $pkg (${c.reason})")
