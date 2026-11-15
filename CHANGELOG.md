@@ -4,8 +4,7 @@ Releases are named `v<version>.<build>`: the first two numbers are the version b
 
 ## 0.20
 
-- New (beta) setting "On-display keyboard": the app opens its keyboard inside the display and resizes for it, like on a phone (Termux's key row rises above the keyboard and the terminal stays visible). You type by tapping the keyboard in the viewer. Applies to displays created after you turn it on; the default is still the phone's keyboard. Restart the Shizuku service once after updating. With the debug log on, the keyboard state of such a display is written to the log after an app starts, to help find out why a keyboard doesn't show.
-- New (beta) setting "Resize app for keyboard": while the phone's keyboard is open in the viewer, the display gets shorter by the keyboard's height, so the app resizes and its bottom (for example Termux's key rows) and input line stay visible. Some apps may restart when the display changes size. Restart the Shizuku service once after updating.
+- When the keyboard opens in the viewer, the display now slides all the way up so the app's bottom edge (for example Termux's key rows) sits just above the keyboard. Before, it only slid far enough to show where you last tapped, so the bottom could stay hidden.
 - The main screen refreshes by itself after any change to Settings, an app's settings, quick launch entries or sizes.
 - New auto-stop limit "Stop at time": stops an app at a clock time (for example 7:00 AM). It means the next time the clock reaches it after the app is launched, once, and works with the screen off. Set a default in Settings or a time per app.
 - Running apps now show the limits that apply to them ("Stops at 35% battery · 45°C · 7:00 AM"), so you don't have to open the app's menu to see them.

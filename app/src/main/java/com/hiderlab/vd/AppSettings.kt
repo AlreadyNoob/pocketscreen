@@ -10,15 +10,11 @@ object AppSettings {
      * Beta. New displays get their own keyboard: an app that focuses a text box raises it inside the
      * display and resizes for it, and you type by tapping it in the viewer. Off = the phone's keyboard.
      */
-    fun onDisplayKeyboard(c: Context): Boolean = p(c).getBoolean("on_display_kb", false)
-    fun setOnDisplayKeyboard(c: Context, on: Boolean) { p(c).edit().putBoolean("on_display_kb", on).apply() }
 
     /**
      * Beta. While the phone's keyboard is open in the viewer, the display is made shorter by the
      * keyboard's height, so the app resizes and its bottom (key rows, input line) stays visible.
      */
-    fun resizeForKeyboard(c: Context): Boolean = p(c).getBoolean("resize_for_kb", false)
-    fun setResizeForKeyboard(c: Context, on: Boolean) { p(c).edit().putBoolean("resize_for_kb", on).apply() }
 
     /** When on, the keyboard only appears from the keyboard icon in the viewer. Off by default. */
     fun suppressKeyboard(c: Context): Boolean = p(c).getBoolean("suppress_kb", false)

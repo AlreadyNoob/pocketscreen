@@ -17,10 +17,6 @@ object Vd {
      */
     private val requestedLandscape = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
 
-    /** Displays whose keyboard policy was set to "local" (the keyboard appears on the display itself). */
-    private val imeLocal = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
-    fun hasDisplayKeyboard(id: Int): Boolean = imeLocal[id] == true
-
     data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0, val fps: Int = 0) {
         val landscape: Boolean get() = if (w != h) w > h else requestedLandscape[id] == true
         val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
@@ -35,23 +31,6 @@ object Vd {
 
     val listeners = CopyOnWriteArrayList<Runnable>()
     @Volatile var logSink: ((String) -> Unit)? = null
-
-    /**
-     * For the on-display keyboard: what Android says about the keyboard a few seconds after an app
-     * starts on the display, and again later (the viewer is usually open by then). Read-only, debug log only.
-     */
-    private fun logKeyboardState(display: Int) {
-        Thread {
-            for (wait in longArrayOf(3500L, 5000L)) {
-                try { Thread.sleep(wait) } catch (_: InterruptedException) { return@Thread }
-                log("keyboard state for display #$display:\n" + exec(
-                    "echo '-- input_method'; dumpsys input_method | grep -E 'mCurFocusedWindow|mCurId|mCurTokenDisplayId|mInputShown|mShowRequested|mImeWindowVis|mCurClient|mCurVirtualDisplayToken' | cut -c1-220; " +
-                    "echo '-- window ime'; dumpsys window | grep -E 'mInputMethodTarget|mImeLayeringTarget|mImeControlTarget|mInputMethodWindow|InputMethod' | cut -c1-220; " +
-                    "echo '-- window displays'; dumpsys window displays | grep -iE 'ime|Display: mDisplayId=$display|systemDecor|shouldShow' | cut -c1-220; " +
-                    "echo '-- display'; dumpsys display | grep -iE 'hiderlab' | cut -c1-400"))
-            }
-        }.start()
-    }
 
     fun log(s: String) { Debug.write(s); logSink?.invoke(s) }
     fun changed() { listeners.forEach { try { it.run() } catch (_: Throwable) {} } }
@@ -462,11 +441,6 @@ object Vd {
         if (r.startsWith("OK:")) {
             id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
             if (id >= 0) requestedLandscape[id] = landscape
-            if (id >= 0 && AppSettings.onDisplayKeyboard(ctx)) {
-                val k = try { s.setImePolicy(id, true) } catch (t: Throwable) { "ERR: $t" }
-                log("keyboard on display #$id: $k")
-                if (k == "OK") imeLocal[id] = true
-            }
             refreshInfo()
             if (fps > 0) log("display #$id refresh as Android reports it:\n" +
                 exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
@@ -489,7 +463,7 @@ object Vd {
     fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
         // Only reuse a display that already has exactly the size and refresh rate a new one would get now.
         val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
-        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && hasDisplayKeyboard(it.id) == AppSettings.onDisplayKeyboard(ctx) && tasks(it.id).isEmpty() }?.id
+        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
             ?: createDisplay(ctx, landscape, cfg, fps)
     }
 
@@ -516,7 +490,6 @@ object Vd {
         // CLEAR_TASK resets that task so the flag takes effect on it too.
         val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 or 0x00008000 else LAUNCH_FLAGS // EXCLUDE_FROM_RECENTS | CLEAR_TASK
         val started = exec("am start --display $display -f $flags -n $comp")
-        if (hasDisplayKeyboard(display) && Debug.enabled(ctx)) logKeyboardState(display)
         return started
     }
 
