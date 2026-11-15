@@ -23,6 +23,8 @@ class HostService : Service() {
 
     companion object {
         const val ACTION_STOP_ALL = "com.hiderlab.vd.STOP_ALL"
+        /** The app that was just confirmed running: counted in the first notification. */
+        const val EXTRA_PKG = "pkg"
         private const val CHANNEL = "hidden_display"
         private const val ALERT_CHANNEL = "app_alerts"
 
@@ -376,7 +378,11 @@ class HostService : Service() {
 
         // No binder calls on the main thread: show a placeholder now, the background refresh fills in the count.
         lastSig = ""
-        val n = buildNotification(emptyList())
+        // Count what we already know: the apps from the last count plus the one that was just started.
+        val first = (cachedApps + listOfNotNull(intent?.getStringExtra(EXTRA_PKG))).distinct()
+        cachedApps = first
+        lastSig = first.sorted().toString()
+        val n = buildNotification(first)
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {

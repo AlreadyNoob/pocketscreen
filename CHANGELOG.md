@@ -4,6 +4,7 @@ Releases are named `v<version>.<build>`: the first two numbers are the version b
 
 ## 0.20
 
+- The notification now counts an app as soon as it is up: the notification service starts once the app is confirmed on its display, so it no longer says "No apps running" while an app is running.
 - When the keyboard opens in the viewer, the viewer shrinks to the space above it and the whole display is scaled down to fit there, as in the early versions, so the app's bottom rows (for example Termux's key rows) and input line stay visible. Replaces the sliding display.
 - The main screen refreshes by itself after any change to Settings, an app's settings, quick launch entries or sizes.
 - New auto-stop limit "Stop at time": stops an app at a clock time (for example 7:00 AM). It means the next time the clock reaches it after the app is launched, once, and works with the screen off. Set a default in Settings or a time per app.

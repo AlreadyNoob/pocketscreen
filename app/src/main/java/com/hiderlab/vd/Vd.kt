@@ -444,12 +444,22 @@ object Vd {
             refreshInfo()
             if (fps > 0) log("display #$id refresh as Android reports it:\n" +
                 exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
-            try {
-                ctx.applicationContext.startForegroundService(Intent(ctx.applicationContext, HostService::class.java))
-            } catch (t: Throwable) { log("Notification service not started: $t") }
+            // The notification service starts once the app is up (see startHost), so its first count is right.
         }
         changed()
         return id
+    }
+
+    /**
+     * Starts the notification service (or lets a running one know). Called when an app has been
+     * confirmed on its display, so the first notification already counts it. [pkg] is that app.
+     */
+    fun startHost(ctx: Context, pkg: String? = null) {
+        try {
+            val i = Intent(ctx.applicationContext, HostService::class.java)
+            if (pkg != null) i.putExtra(HostService.EXTRA_PKG, pkg)
+            ctx.applicationContext.startForegroundService(i)
+        } catch (t: Throwable) { log("Notification service not started: $t") }
     }
 
     /** The hidden display [pkg] is already running on, or null. */

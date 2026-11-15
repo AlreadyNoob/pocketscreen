@@ -913,12 +913,19 @@ class MainActivity : Activity() {
                 val id = Vd.freeDisplay(applicationContext, landscape, Vd.appCfg(applicationContext, pkg), Vd.refreshFor(applicationContext, pkg))
                 if (id >= 0) {
                     log("Launch $pkg on #$id:\n" + Vd.launch(applicationContext, pkg, id))
-                    // Refresh twice so the app shows up as soon as it exists.
+                    // Refresh once so the app shows up as soon as it exists, then wait (up to ~3 s) for it
+                    // to be on the display. That is the moment the notification gets its count.
                     Thread.sleep(600)
                     runOnUiThread { refresh() }
-                    Thread.sleep(900)
+                    var up = false
+                    for (i in 0 until 9) {
+                        Thread.sleep(300)
+                        if (Vd.tasks(id).any { it.second == pkg }) { up = true; break }
+                    }
+                    Vd.startHost(applicationContext, if (up) pkg else null)
+                    if (up) Vd.changed()
                     // Some phones accept the launch but open the app on the main screen instead.
-                    if (Vd.tasks(id).none { it.second == pkg }) {
+                    if (!up) {
                         log(Vd.diagnose(pkg, id))
                         runOnUiThread {
                             Toast.makeText(this, "This phone didn't open ${Apps.label(this, pkg)} on the hidden display. " +
