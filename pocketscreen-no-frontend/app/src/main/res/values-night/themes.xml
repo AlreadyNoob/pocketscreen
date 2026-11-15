@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PocketScreen" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ps_window</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+    <color name="ps_window">#121318</color>
+</resources>
