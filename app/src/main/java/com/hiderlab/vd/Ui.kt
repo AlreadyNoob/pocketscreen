@@ -208,17 +208,34 @@ object Ui {
             val b = if (i == rows.size - 1) big else small
             val radii = floatArrayOf(t, t, t, t, b, b, b, b)
             val base = GradientDrawable()
-            base.setColor(SURFACE)
+            base.setColor(SURFACE2)
             base.cornerRadii = radii
-            base.setStroke(dp(ctx, 1), hair())
             if (v.isClickable) {
                 v.background = withRippleRadii(base, radii)
                 pressable(v, 0.985f)
             } else v.background = base
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.topMargin = dp(ctx, if (i == 0) top else 3)
+            lp.topMargin = dp(ctx, if (i == 0) top else 2)
             parent.addView(v, lp)
         }
+    }
+
+    /** Radio circle for option lists: outlined when off, accent ring with a dot when on. */
+    fun radio(ctx: Context, on: Boolean): View {
+        val v = View(ctx)
+        val ring = GradientDrawable()
+        ring.shape = GradientDrawable.OVAL
+        ring.setColor(Color.TRANSPARENT)
+        ring.setStroke(dp(ctx, 2), if (on) ACCENT else OUTLINE)
+        if (on) {
+            val dotD = GradientDrawable()
+            dotD.shape = GradientDrawable.OVAL
+            dotD.setColor(ACCENT)
+            val ld = android.graphics.drawable.LayerDrawable(arrayOf<Drawable>(ring, dotD))
+            ld.setLayerInset(1, dp(ctx, 5), dp(ctx, 5), dp(ctx, 5), dp(ctx, 5))
+            v.background = ld
+        } else v.background = ring
+        return v
     }
 
     /** Small accent-colored heading above a group. */
@@ -763,32 +780,21 @@ class SwitchView(ctx: Context) : View(ctx) {
     }
 
     override fun onMeasure(wSpec: Int, hSpec: Int) {
-        setMeasuredDimension(Ui.dp(context, 48), Ui.dp(context, 28))
+        setMeasuredDimension(Ui.dp(context, 46), Ui.dp(context, 27))
     }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        val sw = Ui.dpf(context, 2f)
-        // track
+        val tr = Ui.dpf(context, 10f)
         p.style = Paint.Style.FILL
-        p.color = argb.evaluate(progress, Ui.SURFACE2, Ui.ACCENT) as Int
-        c.drawRoundRect(RectF(0f, 0f, w, h), h * 0.36f, h * 0.36f, p)
-        if (progress < 1f) {
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = sw
-            p.color = (Ui.MUTED and 0x00FFFFFF) or (((1f - progress) * 255).toInt() shl 24)
-            c.drawRoundRect(RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), h * 0.36f, h * 0.36f, p)
-        }
-        // thumb
-        val rOff = Ui.dpf(context, 6.5f)
-        val rOn = Ui.dpf(context, 10f)
-        val r = rOff + (rOn - rOff) * progress
-        val pad = h / 2
-        val cx = pad + (w - 2 * pad) * progress
-        p.style = Paint.Style.FILL
+        p.color = argb.evaluate(progress, Ui.OUTLINE, Ui.ACCENT) as Int
+        c.drawRoundRect(RectF(0f, 0f, w, h), tr, tr, p)
+        val t = Ui.dpf(context, 19f)
+        val pad = (h - t) / 2f
+        val x = pad + (w - t - 2f * pad) * progress
         p.color = argb.evaluate(progress, Ui.MUTED, Ui.ON_ACCENT) as Int
-        c.drawRoundRect(RectF(cx - r, h / 2 - r, cx + r, h / 2 + r), r * 0.6f, r * 0.6f, p)
+        c.drawRoundRect(RectF(x, pad, x + t, pad + t), Ui.dpf(context, 7f), Ui.dpf(context, 7f), p)
     }
 }
 

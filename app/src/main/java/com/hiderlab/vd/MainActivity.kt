@@ -443,6 +443,8 @@ class MainActivity : Activity() {
             row.addView(play, LinearLayout.LayoutParams(dp(36), dp(36)).also { it.rightMargin = dp(8) })
 
             val more = moreButton()
+            more.background = null
+            more.tint = Ui.MUTED
             more.setOnClickListener {
                 Ui.menu(this, more, listOf(
                     Ui.MenuItem("App Settings") { showAppSettings(pkg, landscape) },
@@ -1169,18 +1171,18 @@ class MainActivity : Activity() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.minimumHeight = dp(56)
-        row.setPadding(dp(16), dp(10), dp(14), dp(10))
+        row.minimumHeight = 0
+        row.setPadding(dp(14), dp(12), dp(14), dp(12))
         row.isClickable = true
         row.isFocusable = true
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
-        col.addView(Ui.text(this, title, 14.5f, Ui.TEXT, bold = true))
-        if (sub != null) col.addView(Ui.text(this, sub, 12f, Ui.MUTED))
+        col.addView(Ui.text(this, title, 13.5f, Ui.TEXT, bold = true))
+        if (sub != null) col.addView(Ui.text(this, sub, 11.5f, Ui.MUTED).also { it.setLineSpacing(0f, 1.1f) }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(2) })
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         if (trailing != null) {
             val lp = LinearLayout.LayoutParams(-2, -2)
-            lp.leftMargin = dp(12)
+            lp.leftMargin = dp(14)
             row.addView(trailing, lp)
         }
         return row
@@ -1225,16 +1227,12 @@ class MainActivity : Activity() {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.minimumHeight = dp(48)
-        row.setPadding(dp(16), dp(8), dp(14), dp(8))
+        row.minimumHeight = 0
+        row.setPadding(dp(14), dp(14), dp(14), dp(14))
         row.isClickable = true
         row.isFocusable = true
-        row.addView(Ui.text(this, label, 15f, if (selected) Ui.ACCENT else Ui.TEXT, bold = selected), LinearLayout.LayoutParams(0, -2, 1f))
-        if (selected) {
-            val ck = IconView(this, IconView.CHECK, 24, false)
-            ck.tint = Ui.ACCENT
-            row.addView(ck, LinearLayout.LayoutParams(dp(24), dp(24)))
-        }
+        row.addView(Ui.text(this, label, 13.5f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(Ui.radio(this, selected), LinearLayout.LayoutParams(dp(20), dp(20)))
         row.setOnClickListener { onClick() }
         return row
     }
@@ -1248,13 +1246,13 @@ class MainActivity : Activity() {
         current: Int, defaultValue: Int?, onChange: (Int) -> Unit
     ): View {
         var value = current
-        val pill = Ui.pill(this, "", Ui.TEXT, Ui.SURFACE2, 13f)
-        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        val pill = Ui.pill(this, "", Ui.ACCENT, Ui.ACCENT_CONT, 12f)
+        pill.setPadding(dp(10), dp(6), dp(10), dp(6))
         fun style() {
             val on = value > 0 || (value < 0 && (defaultValue ?: 0) > 0)
             pill.text = limitLabel(kind, value, defaultValue)
-            pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
-            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 10f))
+            pill.setTextColor(Ui.ACCENT)
+            pill.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 10f))
         }
         style()
         val row = settingRowBase(title, null, pill)
@@ -1334,13 +1332,13 @@ class MainActivity : Activity() {
     private fun settingsRefresh(current: Int, defaultValue: Int?, onChange: (Int) -> Unit): View {
         val title = "Refresh rate"
         var value = current
-        val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
-        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        val pill = Ui.text(this, "", 12f, Ui.ACCENT, bold = true)
+        pill.setPadding(dp(10), dp(6), dp(10), dp(6))
         fun style() {
             val shown = if (value < 0) (defaultValue ?: 0) else value
             pill.text = if (value < 0) hzLabel(shown, null) else hzLabel(value, null)
-            pill.setTextColor(if (shown > 0) Ui.ON_ACCENT_CONT else Ui.MUTED)
-            pill.background = Ui.shape(if (shown > 0) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 10f))
+            pill.setTextColor(Ui.ACCENT)
+            pill.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 10f))
         }
         style()
         val row = settingRowBase(title, null, pill)
@@ -1398,13 +1396,13 @@ class MainActivity : Activity() {
         // An explicit choice equal to the default is the same thing as following it.
         var value = if (current == opposite) opposite else -1
         fun label(v: Int) = if (v < 0) "Same as Settings (${if (defaultOn) "On" else "Off"})" else if (v == 1) "On" else "Off"
-        val pill = Ui.text(this, "", 13f, Ui.TEXT, bold = true)
-        pill.setPadding(dp(14), dp(7), dp(14), dp(7))
+        val pill = Ui.text(this, "", 12f, Ui.ACCENT, bold = true)
+        pill.setPadding(dp(10), dp(6), dp(10), dp(6))
         fun style() {
             val on = (if (value < 0) defaultOn else value == 1)
             pill.text = if (value < 0) (if (defaultOn) "On" else "Off") else label(value)
-            pill.setTextColor(if (on) Ui.ON_ACCENT_CONT else Ui.MUTED)
-            pill.background = Ui.shape(if (on) Ui.ACCENT_CONT else Ui.SURFACE2, Ui.dpf(this, 10f))
+            pill.setTextColor(Ui.ACCENT)
+            pill.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 10f))
         }
         style()
         val row = settingRowBase(title, sub, pill)
