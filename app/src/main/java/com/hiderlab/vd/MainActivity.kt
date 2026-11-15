@@ -1473,12 +1473,6 @@ class MainActivity : Activity() {
                 settingsToggle("Hide apps from Recents", "Apps you launch won't appear in Recents while running here. Applies to the next launch.", AppSettings.hideFromRecents(this)) {
                     AppSettings.setHideFromRecents(this, it)
                 },
-                settingsToggle("On-display keyboard (beta)", "The app opens its keyboard inside the display and resizes for it, like on a phone. You type by tapping it in the viewer. Applies to displays created from now on.", AppSettings.onDisplayKeyboard(this)) {
-                    AppSettings.setOnDisplayKeyboard(this, it)
-                },
-                settingsToggle("Resize app for keyboard (beta)", "While the keyboard is open the display gets shorter so the app fits above it. Some apps may restart when it changes.", AppSettings.resizeForKeyboard(this)) {
-                    AppSettings.setResizeForKeyboard(this, it)
-                },
                 settingsToggle("Suppress keyboard requests", "Keyboard only opens from the keyboard icon in the viewer.", AppSettings.suppressKeyboard(this)) {
                     AppSettings.setSuppressKeyboard(this, it)
                 }

@@ -37,12 +37,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private lateinit var sv: InputSurfaceView
     private var suppressKb = false
-    /** The display has its own keyboard: the app raises and uses it, and the phone's keyboard stays out of it. */
-    private var displayKb = false
-    /** Make the display shorter while the phone's keyboard is open (a setting). */
-    private var resizeKb = false
-    private var origDh = 0
-    private var resizing = false
     private var backControls = true
     private var lastBack = 0L
     private var barsShown = false
@@ -67,8 +61,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var kbVisible = false
     private var startedHidden = false
     private var kbToggledByUser = false
-    private var imeHeight = 0
-    private var lastTapFrac = 0.5f   // where on the display (0 top .. 1 bottom) you last touched
     private val ui = Handler(Looper.getMainLooper())
 
     private val poll = object : Runnable {
@@ -134,15 +126,14 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.BLACK)
-        // The keyboard overlays the display instead of resizing it; the display is panned instead.
-        Ui.applyInsets(root, ime = false, onIme = { visible, height ->
+        // The keyboard takes its space off the bottom of the viewer, and the whole display is scaled
+        // down to fit in what is left above it (see fit()).
+        Ui.applyInsets(root, ime = true, onIme = { visible, _ ->
             val wasVisible = kbVisible
             kbVisible = visible
-            imeHeight = height
             // Only on the shown -> hidden change, so a keyboard that is still opening isn't cancelled.
             if (wasVisible && !visible && ::sv.isInitialized && suppressKb) setEditor(false)
             if (::kbIcon.isInitialized) kbIcon.tint = if (visible) Ui.ACCENT else Ui.TEXT
-            if (::sv.isInitialized) updatePan()
         }, onInsets = { ins ->
             // For the debug log only: when do the system bars show up?
             if (Build.VERSION.SDK_INT >= 30) {
@@ -190,22 +181,12 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         sv = InputSurfaceView(this)
         sv.sink = this
         suppressKb = AppSettings.suppressKeyboard(this)
-        displayKb = Vd.hasDisplayKeyboard(displayId)
-        if (suppressKb || displayKb) sv.editorAllowed = false
-        if (displayKb) {
-            kbIcon.visibility = View.GONE
-            // Keep the viewer from claiming the keyboard, so Android may give it to the app on the display.
-            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
-        }
-        resizeKb = !displayKb && AppSettings.resizeForKeyboard(this)
-        origDh = dh
-        // A viewer that was killed while the display was shortened leaves it short: set the real size first.
-        if (resizeKb) Thread { try { Vd.service?.resize(displayId, dw, dh) } catch (_: Throwable) {} }.start()
+        if (suppressKb) sv.editorAllowed = false
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
         // The exclusion goes on the full-width box, so it covers the real screen edges even when the
         // display is letterboxed inside it.
-        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(); updatePan() }
+        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
         window.decorView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGestureExclusion() }
 
         sv.holder.setFixedSize(dw, dh)
@@ -245,10 +226,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             }
         }
         touches++
-        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
-            lastTapFrac = (e.y / v.height).coerceIn(0f, 1f)
-            if (kbVisible) updatePan()
-        }
         try { Vd.service?.touchPointers(displayId, action, e.actionIndex, ids, xs, ys) } catch (_: Throwable) {}
         return true
     }
@@ -287,80 +264,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private fun setKb(on: Boolean) {
         kbVisible = on
-        if (on && imeHeight == 0) imeHeight = (box.rootView.height * 0.4f).toInt() // API < 30 can't report it
         kbIcon.tint = if (on) Ui.ACCENT else Ui.TEXT
-        updatePan()
-    }
-
-    /**
-     * With the keyboard open, slides the display up just far enough that the spot you last
-     * touched (normally the text field) stays above the keyboard. The display keeps its size.
-     */
-    /** The display's height that fits above the keyboard, or its full height with no keyboard. */
-    private fun applyKeyboardResize() {
-        var want = origDh
-        if (kbVisible && imeHeight > 0) {
-            val loc = IntArray(2)
-            box.getLocationOnScreen(loc)
-            val covered = (loc[1] + box.height - (box.rootView.height - imeHeight)).coerceAtLeast(0)
-            if (covered > 0 && box.width > 0) {
-                val availH = box.height - covered
-                val fitted = (availH * dw.toFloat() / box.width).toInt() and 1.inv() // even
-                want = fitted.coerceIn((origDh * 0.4f).toInt(), origDh)
-            }
-        }
-        sv.animate().translationY(0f).setDuration(0).start()
-        if (want == dh || resizing || kotlin.math.abs(want - dh) < 8) return
-        resizing = true
-        Thread {
-            val r = try { Vd.service?.resize(displayId, dw, want) } catch (t: Throwable) { t.toString() }
-            ui.post {
-                resizing = false
-                if (r == "OK") {
-                    dh = want
-                    sv.holder.setFixedSize(dw, dh)
-                    fit()
-                    // the keyboard may have opened or closed meanwhile
-                    if (::box.isInitialized) applyKeyboardResize()
-                } else {
-                    Vd.log("resize for keyboard: $r")
-                    resizeKb = false // not supported here: back to sliding the display
-                    if (::box.isInitialized) updatePan()
-                }
-            }
-        }.start()
-    }
-
-    private fun updatePan() {
-        if (!::box.isInitialized || sv.height <= 0 || displayKb) return
-        if (resizeKb && rot == 0) { applyKeyboardResize(); return }
-        var shift = 0f
-        if (kbVisible && imeHeight > 0) {
-            val loc = IntArray(2)
-            box.getLocationOnScreen(loc)
-            val boxBottom = loc[1] + box.height
-            val kbTop = box.rootView.height - imeHeight
-            val covered = (boxBottom - kbTop).coerceAtLeast(0)          // part of the box under the keyboard
-            if (covered > 0) {
-                val tapY = sv.top + sv.height * lastTapFrac               // in box coordinates
-                val visible = box.height - covered
-                val margin = Ui.dp(this, 48)
-                shift = (tapY - (visible - margin)).coerceIn(0f, covered.toFloat())
-                // never slide the display's bottom edge above the keyboard
-                val svBottomGap = (box.height - (sv.top + sv.height)).coerceAtLeast(0)
-                shift = shift.coerceAtMost((covered - svBottomGap).coerceAtLeast(0).toFloat())
-            }
-        }
-        sv.animate().translationY(-shift).setDuration(150).start()
-    }
-
-    override fun onDestroy() {
-        // Give the display its real height back.
-        if (resizeKb && dh != origDh) {
-            val id = displayId
-            Thread { try { Vd.service?.resize(id, dw, origDh) } catch (_: Throwable) {} }.start()
-        }
-        super.onDestroy()
     }
 
     // ---- leaving: only via the arrow ----
@@ -540,7 +444,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         backControls = AppSettings.effectiveBackGesture(this, pkg)
         suppressKb = AppSettings.effectiveSuppressKeyboard(this, pkg)
         if (::sv.isInitialized) {
-            sv.editorAllowed = !displayKb && (!suppressKb || kbVisible)
+            sv.editorAllowed = !suppressKb || kbVisible
         }
     }
 

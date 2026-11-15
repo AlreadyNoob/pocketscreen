@@ -23,8 +23,4 @@ interface IVdService {
     oneway void typeText(int id, String text) = 13;
     // all fingers at once: action is the MotionEvent action, actionIndex the pointer it applies to
     oneway void touchPointers(int id, int action, int actionIndex, in int[] pointerIds, in float[] xs, in float[] ys) = 14;
-    // true: the display shows the keyboard itself and its apps resize for it; false: no keyboard on the display. "OK" or an error.
-    String setImePolicy(int id, boolean local) = 15;
-    // changes the display's size (same dpi); the apps on it get a configuration change. "OK" or an error.
-    String resize(int id, int w, int h) = 16;
 }
