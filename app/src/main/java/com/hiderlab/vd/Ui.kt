@@ -261,10 +261,16 @@ object Ui {
         t.text = s
         t.textSize = sp
         t.setTextColor(color)
-        if (bold) t.typeface = Typeface.create("sans-serif-medium", if (sp >= 20f) Typeface.BOLD else Typeface.NORMAL)
-        if (sp >= 20f) t.letterSpacing = -0.015f // large titles sit tighter
+        // Same weights as the design: titles 800, headings and names 700, small labels 600.
+        if (bold) t.typeface = face(if (sp >= 20f) 800 else if (sp >= 14f) 700 else 600)
+        if (sp >= 20f) t.letterSpacing = -0.02f // large titles sit tighter
         return t
     }
+
+    /** Real font weights on Android 9+, plain bold on older versions. */
+    fun face(weight: Int): Typeface =
+        if (Build.VERSION.SDK_INT >= 28) Typeface.create(Typeface.DEFAULT, weight, false)
+        else if (weight >= 700) Typeface.DEFAULT_BOLD else Typeface.create("sans-serif-medium", Typeface.NORMAL)
 
     /** Styles an EditText as a filled field that gets an accent outline while focused. */
     fun styleInput(ctx: Context, e: EditText) {
@@ -300,7 +306,7 @@ object Ui {
         t.setTextColor(fg)
         t.textSize = 15f
         t.letterSpacing = 0.01f
-        t.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        t.typeface = face(700)
         t.gravity = Gravity.CENTER
         t.minHeight = dp(ctx, 52)
         t.setPadding(dp(ctx, 22), 0, dp(ctx, 22), 0)
@@ -313,6 +319,23 @@ object Ui {
         t.isFocusable = true
         t.setOnClickListener { onClick() }
         pressable(t)
+        return t
+    }
+
+    /** Compact button (42dp high, 13sp) for inline use inside cards. */
+    fun smallButton(ctx: Context, label: String, kind: Kind = Kind.TONAL, onClick: () -> Unit): TextView {
+        val t = button(ctx, label, kind, onClick)
+        t.textSize = 13f
+        t.minHeight = dp(ctx, 42)
+        t.setPadding(dp(ctx, 14), 0, dp(ctx, 14), 0)
+        val bg = when (kind) {
+            Kind.FILLED -> ACCENT
+            Kind.TONAL -> SURFACE2
+            Kind.DANGER -> DANGER_BG
+            else -> Color.TRANSPARENT
+        }
+        val r = dpf(ctx, 14f)
+        t.background = withRipple(shape(bg, r), r)
         return t
     }
 
@@ -342,19 +365,21 @@ object Ui {
         return c
     }
 
-    /** Status cell: small label over a coloured dot and a value. Three of them make the status strip. */
-    fun statusCell(ctx: Context, label: String, value: String, color: Int): LinearLayout {
+    /** Status cell: small label over an optional coloured dot and a value. Three of them make the status strip. */
+    fun statusCell(ctx: Context, label: String, value: String, color: Int?): LinearLayout {
         val c = LinearLayout(ctx)
         c.orientation = LinearLayout.VERTICAL
-        c.setPadding(dp(ctx, 12), dp(ctx, 10), dp(ctx, 12), dp(ctx, 11))
-        c.background = shape(SURFACE, dpf(ctx, 16f), hair(), dp(ctx, 1))
-        c.addView(text(ctx, label, 11.5f, MUTED))
+        c.setPadding(dp(ctx, 11), dp(ctx, 9), dp(ctx, 11), dp(ctx, 9))
+        c.background = shape(SURFACE, dpf(ctx, 15f), hair(), dp(ctx, 1))
+        c.addView(text(ctx, label, 11f, MUTED))
         val r = LinearLayout(ctx)
         r.orientation = LinearLayout.HORIZONTAL
         r.gravity = Gravity.CENTER_VERTICAL
-        val lp = LinearLayout.LayoutParams(dp(ctx, 7), dp(ctx, 7))
-        lp.rightMargin = dp(ctx, 6)
-        r.addView(dot(ctx, color, 7), lp)
+        if (color != null) {
+            val lp = LinearLayout.LayoutParams(dp(ctx, 7), dp(ctx, 7))
+            lp.rightMargin = dp(ctx, 6)
+            r.addView(dot(ctx, color, 7), lp)
+        }
         val v = text(ctx, value, 12.5f, TEXT, bold = true)
         v.isSingleLine = true
         r.addView(v)
@@ -367,7 +392,8 @@ object Ui {
         val ctx = parent.context
         val r = dpf(ctx, 20f)
         for ((i, v) in rows.withIndex()) {
-            val base = shape(SURFACE, r, hair(), dp(ctx, 1))
+            val edge = if (v.tag == "crash") (BAD and 0x00FFFFFF) or 0x73000000 else hair()
+            val base = shape(SURFACE, r, edge, dp(ctx, 1))
             if (v.isClickable) {
                 v.background = withRipple(base, r)
                 pressable(v, 0.985f)
@@ -383,7 +409,7 @@ object Ui {
         val f = LinearLayout(ctx)
         f.orientation = LinearLayout.HORIZONTAL
         f.gravity = Gravity.CENTER
-        f.minimumHeight = dp(ctx, 54)
+        f.minimumHeight = dp(ctx, 52)
         val r = dpf(ctx, 18f)
         f.background = withRipple(shape(ACCENT, r), r)
         f.isClickable = true
@@ -398,9 +424,9 @@ object Ui {
                 outline.setRoundRect(0, 0, view.width, view.height, r)
             }
         }
-        val ic = IconView(ctx, IconView.PLUS, 22, false)
+        val ic = IconView(ctx, IconView.PLUS, 19, false)
         ic.tint = ON_ACCENT
-        f.addView(ic, LinearLayout.LayoutParams(dp(ctx, 22), dp(ctx, 22)))
+        f.addView(ic, LinearLayout.LayoutParams(dp(ctx, 19), dp(ctx, 19)))
         val t = text(ctx, label, 15f, ON_ACCENT, bold = true)
         val tl = LinearLayout.LayoutParams(-2, -2)
         tl.leftMargin = dp(ctx, 8)
@@ -781,7 +807,7 @@ class LogoView(ctx: Context, private val sizeDp: Int = 44) : View(ctx) {
         val h = height.toFloat()
         p.style = Paint.Style.FILL
         p.color = Ui.ACCENT_CONT
-        c.drawRoundRect(RectF(0f, 0f, w, h), w * 0.3f, w * 0.3f, p)
+        c.drawRoundRect(RectF(0f, 0f, w, h), w * 0.325f, w * 0.325f, p)
         val cx = w / 2f
         val cy = h / 2f
         val pw = w * 0.26f
