@@ -61,7 +61,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var kbVisible = false
     private var startedHidden = false
     private var kbToggledByUser = false
-    private var imeHeight = 0
     private val ui = Handler(Looper.getMainLooper())
 
     private val poll = object : Runnable {
@@ -127,15 +126,14 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.BLACK)
-        // The keyboard overlays the display instead of resizing it; the display is panned instead.
-        Ui.applyInsets(root, ime = false, onIme = { visible, height ->
+        // The keyboard takes its space off the bottom of the viewer, and the whole display is scaled
+        // down to fit in what is left above it (see fit()).
+        Ui.applyInsets(root, ime = true, onIme = { visible, _ ->
             val wasVisible = kbVisible
             kbVisible = visible
-            imeHeight = height
             // Only on the shown -> hidden change, so a keyboard that is still opening isn't cancelled.
             if (wasVisible && !visible && ::sv.isInitialized && suppressKb) setEditor(false)
             if (::kbIcon.isInitialized) kbIcon.tint = if (visible) Ui.ACCENT else Ui.TEXT
-            if (::sv.isInitialized) updatePan()
         }, onInsets = { ins ->
             // For the debug log only: when do the system bars show up?
             if (Build.VERSION.SDK_INT >= 30) {
@@ -188,7 +186,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
         // The exclusion goes on the full-width box, so it covers the real screen edges even when the
         // display is letterboxed inside it.
-        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(); updatePan() }
+        box.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit() }
         window.decorView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateGestureExclusion() }
 
         sv.holder.setFixedSize(dw, dh)
@@ -228,9 +226,6 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
             }
         }
         touches++
-        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP) {
-            if (kbVisible) updatePan()
-        }
         try { Vd.service?.touchPointers(displayId, action, e.actionIndex, ids, xs, ys) } catch (_: Throwable) {}
         return true
     }
@@ -269,32 +264,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private fun setKb(on: Boolean) {
         kbVisible = on
-        if (on && imeHeight == 0) imeHeight = (box.rootView.height * 0.4f).toInt() // API < 30 can't report it
         kbIcon.tint = if (on) Ui.ACCENT else Ui.TEXT
-        updatePan()
-    }
-
-    /**
-     * With the keyboard open, slides the display all the way up so its bottom edge sits just above
-     * the keyboard. The display keeps its size.
-     */
-    private fun updatePan() {
-        if (!::box.isInitialized || sv.height <= 0) return
-        var shift = 0f
-        if (kbVisible && imeHeight > 0) {
-            val loc = IntArray(2)
-            box.getLocationOnScreen(loc)
-            val boxBottom = loc[1] + box.height
-            val kbTop = box.rootView.height - imeHeight
-            val covered = (boxBottom - kbTop).coerceAtLeast(0)          // part of the box under the keyboard
-            if (covered > 0) {
-                // Push the display all the way up: its bottom edge ends just above the keyboard,
-                // so the app's bottom rows (e.g. Termux's ESC/CTRL row) are always visible.
-                val svBottomGap = (box.height - (sv.top + sv.height)).coerceAtLeast(0)
-                shift = (covered - svBottomGap).coerceAtLeast(0).toFloat()
-            }
-        }
-        sv.animate().translationY(-shift).setDuration(150).start()
     }
 
     // ---- leaving: only via the arrow ----
