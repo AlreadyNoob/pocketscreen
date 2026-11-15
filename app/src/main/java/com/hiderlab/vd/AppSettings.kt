@@ -6,6 +6,13 @@ import android.content.Context
 object AppSettings {
     private fun p(c: Context) = c.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    /**
+     * Beta. New displays get their own keyboard: an app that focuses a text box raises it inside the
+     * display and resizes for it, and you type by tapping it in the viewer. Off = the phone's keyboard.
+     */
+    fun onDisplayKeyboard(c: Context): Boolean = p(c).getBoolean("on_display_kb", false)
+    fun setOnDisplayKeyboard(c: Context, on: Boolean) { p(c).edit().putBoolean("on_display_kb", on).apply() }
+
     /** When on, the keyboard only appears from the keyboard icon in the viewer. Off by default. */
     fun suppressKeyboard(c: Context): Boolean = p(c).getBoolean("suppress_kb", false)
     fun setSuppressKeyboard(c: Context, on: Boolean) { p(c).edit().putBoolean("suppress_kb", on).apply() }

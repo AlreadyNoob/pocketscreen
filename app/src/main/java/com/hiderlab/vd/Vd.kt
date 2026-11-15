@@ -17,6 +17,10 @@ object Vd {
      */
     private val requestedLandscape = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
 
+    /** Displays whose keyboard policy was set to "local" (the keyboard appears on the display itself). */
+    private val imeLocal = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+    fun hasDisplayKeyboard(id: Int): Boolean = imeLocal[id] == true
+
     data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0, val fps: Int = 0) {
         val landscape: Boolean get() = if (w != h) w > h else requestedLandscape[id] == true
         val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
@@ -441,6 +445,11 @@ object Vd {
         if (r.startsWith("OK:")) {
             id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
             if (id >= 0) requestedLandscape[id] = landscape
+            if (id >= 0 && AppSettings.onDisplayKeyboard(ctx)) {
+                val k = try { s.setImePolicy(id, true) } catch (t: Throwable) { "ERR: $t" }
+                log("keyboard on display #$id: $k")
+                if (k == "OK") imeLocal[id] = true
+            }
             refreshInfo()
             if (fps > 0) log("display #$id refresh as Android reports it:\n" +
                 exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
@@ -463,7 +472,7 @@ object Vd {
     fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
         // Only reuse a display that already has exactly the size and refresh rate a new one would get now.
         val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
-        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
+        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && hasDisplayKeyboard(it.id) == AppSettings.onDisplayKeyboard(ctx) && tasks(it.id).isEmpty() }?.id
             ?: createDisplay(ctx, landscape, cfg, fps)
     }
 

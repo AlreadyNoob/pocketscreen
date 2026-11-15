@@ -37,6 +37,8 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
 
     private lateinit var sv: InputSurfaceView
     private var suppressKb = false
+    /** The display has its own keyboard: the app raises and uses it, and the phone's keyboard stays out of it. */
+    private var displayKb = false
     private var backControls = true
     private var lastBack = 0L
     private var barsShown = false
@@ -184,7 +186,9 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         sv = InputSurfaceView(this)
         sv.sink = this
         suppressKb = AppSettings.suppressKeyboard(this)
-        if (suppressKb) sv.editorAllowed = false
+        displayKb = Vd.hasDisplayKeyboard(displayId)
+        if (suppressKb || displayKb) sv.editorAllowed = false
+        if (displayKb) kbIcon.visibility = View.GONE
         box.addView(sv, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         root.addView(box, LinearLayout.LayoutParams(-1, 0, 1f))
         // The exclusion goes on the full-width box, so it covers the real screen edges even when the
@@ -281,7 +285,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
      * touched (normally the text field) stays above the keyboard. The display keeps its size.
      */
     private fun updatePan() {
-        if (!::box.isInitialized || sv.height <= 0) return
+        if (!::box.isInitialized || sv.height <= 0 || displayKb) return
         var shift = 0f
         if (kbVisible && imeHeight > 0) {
             val loc = IntArray(2)
@@ -479,7 +483,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
         backControls = AppSettings.effectiveBackGesture(this, pkg)
         suppressKb = AppSettings.effectiveSuppressKeyboard(this, pkg)
         if (::sv.isInitialized) {
-            sv.editorAllowed = !suppressKb || kbVisible
+            sv.editorAllowed = !displayKb && (!suppressKb || kbVisible)
         }
     }
 

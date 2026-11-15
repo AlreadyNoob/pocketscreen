@@ -4,6 +4,8 @@ Releases are named `v<version>.<build>`: the first two numbers are the version b
 
 ## 0.20
 
+- New (beta) setting "On-display keyboard": the app opens its keyboard inside the display and resizes for it, like on a phone (Termux's key row rises above the keyboard and the terminal stays visible). You type by tapping the keyboard in the viewer. Applies to displays created after you turn it on; the default is still the phone's keyboard. Restart the Shizuku service once after updating.
+- The main screen refreshes by itself after any change to Settings, an app's settings, quick launch entries or sizes.
 - New auto-stop limit "Stop at time": stops an app at a clock time (for example 7:00 AM). It means the next time the clock reaches it after the app is launched, once, and works with the screen off. Set a default in Settings or a time per app.
 - Running apps now show the limits that apply to them ("Stops at 35% battery · 45°C · 7:00 AM"), so you don't have to open the app's menu to see them.
 - Auto-stop limits now work while the screen is off. The checks used to wait on a timer that doesn't run while the phone is in deep sleep, so a battery, temperature or time limit only fired when you woke the phone. They now run from alarms that wake it briefly: every 30 s with the screen on; with it off, as late as the limits allow (battery limits from the recent drain rate, at most every 10 minutes), and a time limit exactly when it runs out.

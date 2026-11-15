@@ -104,23 +104,37 @@ class VdService : IVdService.Stub() {
      * own window and sends the keys into the display.
      */
     private fun hideImeOnDisplay(id: Int) {
-        try {
-            val binder = Class.forName("android.os.ServiceManager")
-                .getMethod("getService", String::class.java).invoke(null, "window") as IBinder
-            val wm = Class.forName("android.view.IWindowManager\$Stub")
-                .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
-            val intT = Int::class.javaPrimitiveType
-            val m = wm.javaClass.methods.firstOrNull { it.name == "setDisplayImePolicy" && it.parameterCount == 2 }
-            if (m != null) {
-                m.invoke(wm, id, 2) // DISPLAY_IME_POLICY_HIDE
-            } else {
-                // Android 10: the same switch is a boolean.
-                wm.javaClass.getMethod("setShouldShowIme", intT, Boolean::class.javaPrimitiveType).invoke(wm, id, false)
-            }
-        } catch (t: Throwable) {
-            lastError = "ime policy: " + unwrap(t).toString().take(150)
-            Log.w("VdService", "Could not hide the keyboard on display $id: $t")
+        val r = applyImePolicy(id, false)
+        if (r != "OK") lastError = "ime policy: $r"
+    }
+
+    /**
+     * local = true: the display gets its own keyboard, so an app that focuses a text box raises it on
+     * the display and resizes for it, as on a phone. false: no keyboard on the display (see above).
+     */
+    private fun applyImePolicy(id: Int, local: Boolean): String = try {
+        val binder = Class.forName("android.os.ServiceManager")
+            .getMethod("getService", String::class.java).invoke(null, "window") as IBinder
+        val wm = Class.forName("android.view.IWindowManager\$Stub")
+            .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+        val intT = Int::class.javaPrimitiveType
+        val m = wm.javaClass.methods.firstOrNull { it.name == "setDisplayImePolicy" && it.parameterCount == 2 }
+        if (m != null) {
+            m.invoke(wm, id, if (local) 0 else 2) // DISPLAY_IME_POLICY_LOCAL / _HIDE
+        } else {
+            // Android 10: the same switch is a boolean.
+            wm.javaClass.getMethod("setShouldShowIme", intT, Boolean::class.javaPrimitiveType).invoke(wm, id, local)
         }
+        "OK"
+    } catch (t: Throwable) {
+        val why = unwrap(t).toString().take(150)
+        Log.w("VdService", "Could not set the keyboard policy on display $id: $why")
+        why
+    }
+
+    override fun setImePolicy(id: Int, local: Boolean): String {
+        if (displays[id] == null) return "no such display"
+        return applyImePolicy(id, local)
     }
 
     override fun releaseDisplay(id: Int): String {

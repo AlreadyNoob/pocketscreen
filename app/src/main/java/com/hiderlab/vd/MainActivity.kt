@@ -202,6 +202,7 @@ class MainActivity : Activity() {
         // Light/dark or wallpaper colors changed while we were away: rebuild with the new palette.
         if (Ui.themeChanged(this)) { recreate(); return }
         refresh()
+        for (n in watchedPrefs) getSharedPreferences(n, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(prefsListener)
         tickHandler.removeCallbacks(tick)
         tickHandler.postDelayed(tick, 30_000)
         Updater.autoCheck(applicationContext) { r -> runOnUiThread { if (!isFinishing) showUpdate(r) } }
@@ -245,8 +246,30 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Any change to the settings, a quick launch entry or an app's size redraws the main screen after a
+     * moment, so the lists never show old values (limits, sizes, refresh rate...).
+     */
+    private val watchedPrefs = listOf("settings", "presets", "display", "app_size")
+    private var lastAutoRefresh = 0L
+    private val refreshSoon = Runnable {
+        if (isFinishing || isDestroyed) return@Runnable
+        lastAutoRefresh = System.currentTimeMillis()
+        refresh()
+        refreshTasks()
+    }
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        // Not again right after a refresh, in case a refresh itself saves something.
+        if (System.currentTimeMillis() - lastAutoRefresh > 400L) {
+            tickHandler.removeCallbacks(refreshSoon)
+            tickHandler.postDelayed(refreshSoon, 150)
+        }
+    }
+
     override fun onPause() {
         tickHandler.removeCallbacks(tick)
+        tickHandler.removeCallbacks(refreshSoon)
+        for (n in watchedPrefs) getSharedPreferences(n, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(prefsListener)
         super.onPause()
     }
 
@@ -1449,6 +1472,9 @@ class MainActivity : Activity() {
                 },
                 settingsToggle("Hide apps from Recents", "Apps you launch won't appear in Recents while running here. Applies to the next launch.", AppSettings.hideFromRecents(this)) {
                     AppSettings.setHideFromRecents(this, it)
+                },
+                settingsToggle("On-display keyboard (beta)", "The app opens its keyboard inside the display and resizes for it, like on a phone. You type by tapping it in the viewer. Applies to displays created from now on.", AppSettings.onDisplayKeyboard(this)) {
+                    AppSettings.setOnDisplayKeyboard(this, it)
                 },
                 settingsToggle("Suppress keyboard requests", "Keyboard only opens from the keyboard icon in the viewer.", AppSettings.suppressKeyboard(this)) {
                     AppSettings.setSuppressKeyboard(this, it)
