@@ -1,0 +1,647 @@
+package com.hiderlab.vd
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.IBinder
+import rikka.shizuku.Shizuku
+import java.util.concurrent.CopyOnWriteArrayList
+
+/** App-side connection to the Shizuku service. Shared by the UI, viewer and notification. */
+object Vd {
+    /**
+     * Orientation each display was asked for. The shape alone can't tell a square display (a custom
+     * 240x240, say) from a portrait one, so what was requested at creation is remembered here.
+     */
+    private val requestedLandscape = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
+    data class Disp(val id: Int, val w: Int, val h: Int, val dpi: Int = 0, val fps: Int = 0) {
+        val landscape: Boolean get() = if (w != h) w > h else requestedLandscape[id] == true
+        val label: String get() = "#$id ${if (landscape) "landscape" else "portrait"} ${w}x$h"
+    }
+
+    private const val LAUNCH_FLAGS = 0x10000000 // FLAG_ACTIVITY_NEW_TASK only, so the task can appear in Recents
+
+    @Volatile var service: IVdService? = null
+    @Volatile var displays: List<Disp> = emptyList()
+    @Volatile var inputError = ""
+    @Volatile private var binding = false
+
+    val listeners = CopyOnWriteArrayList<Runnable>()
+    @Volatile var logSink: ((String) -> Unit)? = null
+
+    fun log(s: String) { Debug.write(s); logSink?.invoke(s) }
+    fun changed() { listeners.forEach { try { it.run() } catch (_: Throwable) {} } }
+
+    private val conn = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            service = IVdService.Stub.asInterface(binder)
+            binding = false
+            log("Service connected")
+            Thread { refreshInfo(); changed() }.start()
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            service = null
+            binding = false
+            displays = emptyList()
+            log("Service disconnected")
+            changed()
+        }
+    }
+
+    fun shizukuRunning(): Boolean = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
+    fun permitted(): Boolean = shizukuRunning() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+
+    @Suppress("DEPRECATION")
+    fun connect(ctx: Context, force: Boolean = false) {
+        if (force) binding = false
+        if (service != null || binding || !permitted()) return
+        binding = true
+        val code = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionCode
+        val args = Shizuku.UserServiceArgs(ComponentName(ctx.packageName, VdService::class.java.name))
+            .daemon(true)
+            .processNameSuffix("vd")
+            .version(code)
+        Shizuku.bindUserService(args, conn)
+        log("Connecting...")
+    }
+
+    fun display(id: Int): Disp? = displays.firstOrNull { it.id == id }
+
+    /** Reads the display list from the service (it may already have displays from an earlier session). */
+    fun refreshInfo() {
+        val s = service ?: return
+        try {
+            val parts = s.info().split("#", limit = 2)
+            displays = parts[0].split(";").mapNotNull {
+                val p = it.split(",")
+                if (p.size >= 3) {
+                    val id = p[0].toIntOrNull(); val w = p[1].toIntOrNull(); val h = p[2].toIntOrNull()
+                    val dpi = p.getOrNull(3)?.toIntOrNull() ?: 0
+                    val fps = p.getOrNull(4)?.toIntOrNull() ?: 0
+                    if (id != null && w != null && h != null) Disp(id, w, h, dpi, fps) else null
+                } else null
+            }
+            inputError = parts.getOrElse(1) { "" }
+        } catch (t: Throwable) { log("info failed: $t") }
+    }
+
+    fun exec(cmd: String): String = try { service?.exec(cmd) ?: "ERR: not connected" } catch (t: Throwable) { "ERR: $t" }
+
+    fun tasks(display: Int): List<Pair<Int, String>> {
+        val raw = try { service?.tasksOn(display) ?: "" } catch (t: Throwable) { "" }
+        if (raw.startsWith("ERR")) { log(raw); return emptyList() }
+        return raw.lines().mapNotNull {
+            val p = it.split("|")
+            if (p.size == 2) p[0].toIntOrNull()?.let { id -> id to p[1] } else null
+        }
+    }
+
+    // ---- per-app mute ----
+
+    private fun mutePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("mute", Context.MODE_PRIVATE)
+
+    /** Apps the user wants muted whenever they run on a hidden display. Saved on the phone. */
+    fun mutedApps(ctx: Context): Set<String> = mutePrefs(ctx).getStringSet("pkgs", emptySet()) ?: emptySet()
+
+    fun isMuted(ctx: Context, pkg: String): Boolean = pkg in mutedApps(ctx)
+
+    /** Remembers the choice only. It is applied to the app the next time it is launched. */
+    fun setMutedPref(ctx: Context, pkg: String, muted: Boolean) {
+        val s = HashSet(mutedApps(ctx))
+        if (muted) s.add(pkg) else s.remove(pkg)
+        mutePrefs(ctx).edit().putStringSet("pkgs", s).apply()
+    }
+
+    /**
+     * Turns the app's sound off or on right now, using the PLAY_AUDIO app-op (the same switch
+     * that "mute this app" tools use). Returns the shell output for the log.
+     */
+    private fun applyAudio(pkg: String, muted: Boolean): String {
+        val set = exec("cmd appops set $pkg PLAY_AUDIO ${if (muted) "deny" else "allow"}")
+        val now = exec("cmd appops get $pkg PLAY_AUDIO").trim()
+        return (set.trim() + "\n" + now).trim()
+    }
+
+    /** Saves the choice and applies it to the running app. */
+    fun setMuted(ctx: Context, pkg: String, muted: Boolean): String {
+        setMutedPref(ctx, pkg, muted)
+        return applyAudio(pkg, muted)
+    }
+
+    /**
+     * The mute is a system-wide setting for the app, so when the app stops running here we hand its
+     * sound back; otherwise it would stay silent on the main screen too. The choice itself is kept
+     * and is applied again on the next launch.
+     */
+    private fun restoreAudio(ctx: Context, pkg: String) {
+        if (isMuted(ctx, pkg)) applyAudio(pkg, false)
+    }
+
+    /** Gives sound back to every muted app and clears the saved choice, so the mute icons show it too. */
+    fun restoreAllAudio(ctx: Context): String =
+        mutedApps(ctx).toList().joinToString("\n") { "$it: " + setMuted(ctx, it, false).lines().lastOrNull().orEmpty() }
+            .ifEmpty { "No muted apps." }
+
+    /** Re-applies the saved sound state; used shortly after launch, once the app's process exists. */
+    fun syncAudio(ctx: Context, pkg: String): String = applyAudio(pkg, isMuted(ctx, pkg))
+
+    /** Force-stops an app and returns its sound to normal. */
+    fun stopApp(ctx: Context, pkg: String): String {
+        val r = exec("am force-stop $pkg")
+        restoreAudio(ctx, pkg)
+        clearSession(ctx, pkg)
+        return r
+    }
+
+    /**
+     * Force-stops an app, then removes its display. The display is removed even if the app's task
+     * lingers for a moment; it is only kept when a different app is still running on it.
+     */
+    fun stopAppAndDisplay(ctx: Context, pkg: String): String {
+        val id = displayOf(pkg)
+        var r = stopApp(ctx, pkg)
+        if (id != null) {
+            var tries = 0
+            while (tries < 30 && tasks(id).any { it.second == pkg }) {
+                Thread.sleep(100); tries++
+                if (tries == 15) r = exec("am force-stop $pkg") // still there after 1.5 s: ask again
+            }
+            if (tasks(id).none { it.second != pkg }) releaseOnly(ctx, id)
+        }
+        return r
+    }
+
+    // ---- memory and CPU ----
+
+    data class Stat(val memMb: Int?, val cpu: Double?)
+
+    /**
+     * Approximate memory (PSS, from dumpsys meminfo) and recent CPU use (from dumpsys cpuinfo, an
+     * average over the last few minutes) for each package. Missing values are null.
+     */
+    fun appStats(pkgs: List<String>): Map<String, Stat> {
+        if (pkgs.isEmpty()) return emptyMap()
+        val cpuByPkg = HashMap<String, Double>()
+        try {
+            val pat = pkgs.joinToString("|")
+            val out = exec("dumpsys cpuinfo | grep -E '/($pat)'")
+            val re = Regex("(\\d+(?:\\.\\d+)?)%\\s+\\d+/([\\w.]+)(?::[\\w.]+)?:")
+            for (line in out.lines()) {
+                val m = re.find(line) ?: continue
+                val name = m.groupValues[2]
+                if (name in pkgs) cpuByPkg[name] = (cpuByPkg[name] ?: 0.0) + (m.groupValues[1].toDoubleOrNull() ?: 0.0)
+            }
+        } catch (_: Throwable) {}
+        // dumpsys cpuinfo counts one full core as 100%, so 130% means 1.3 cores. Show share of the whole CPU.
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val res = HashMap<String, Stat>()
+        for (pkg in pkgs) {
+            var mem: Int? = null
+            try {
+                val out = exec("dumpsys meminfo $pkg")
+                val m = Regex("TOTAL PSS:\\s+(\\d+)").find(out) ?: Regex("(?m)^\\s*TOTAL\\s+(\\d+)").find(out)
+                mem = m?.groupValues?.get(1)?.toLongOrNull()?.let { (it / 1024).toInt() }
+            } catch (_: Throwable) {}
+            res[pkg] = Stat(mem, cpuByPkg[pkg]?.let { (it / cores).coerceAtMost(100.0) })
+        }
+        return res
+    }
+
+    // ---- quick launch presets ----
+
+    private fun presetPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("presets", Context.MODE_PRIVATE)
+
+    /** Saved apps for one-tap launch: package and orientation, in the order they were saved. */
+    fun presets(ctx: Context): List<Pair<String, Boolean>> =
+        (presetPrefs(ctx).getString("list", "") ?: "").lines().mapNotNull {
+            val p = it.split("|")
+            if (p.size == 2 && p[0].isNotEmpty()) p[0] to (p[1] == "1") else null
+        }
+
+    fun presetOf(ctx: Context, pkg: String): Boolean? = presets(ctx).firstOrNull { it.first == pkg }?.second
+
+    private fun writePresets(ctx: Context, l: List<Pair<String, Boolean>>) {
+        presetPrefs(ctx).edit().putString("list", l.joinToString("\n") { "${it.first}|${if (it.second) 1 else 0}" }).apply()
+    }
+
+    fun savePreset(ctx: Context, pkg: String, landscape: Boolean) {
+        val l = presets(ctx).toMutableList()
+        val i = l.indexOfFirst { it.first == pkg }
+        if (i >= 0) l[i] = pkg to landscape else l.add(pkg to landscape)
+        writePresets(ctx, l)
+    }
+
+    fun removePreset(ctx: Context, pkg: String) { writePresets(ctx, presets(ctx).filter { it.first != pkg }) }
+
+    // ---- session time ----
+
+    private fun sessionPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("sessions", Context.MODE_PRIVATE)
+
+    fun markSession(ctx: Context, pkg: String) {
+        sessionPrefs(ctx).edit().putLong(pkg, System.currentTimeMillis()).apply()
+        setDeadline(ctx, pkg)
+    }
+    fun clearSession(ctx: Context, pkg: String) {
+        sessionPrefs(ctx).edit().remove(pkg).apply()
+        deadlinePrefs(ctx).edit().remove(pkg).apply()
+    }
+
+    // ---- "stop at a clock time" ----
+
+    private fun deadlinePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("deadlines", Context.MODE_PRIVATE)
+
+    /** The next moment after [from] when the clock reads [minuteOfDay] (0..1439). */
+    fun nextOccurrence(minuteOfDay: Int, from: Long): Long {
+        val c = java.util.Calendar.getInstance()
+        c.timeInMillis = from
+        c.set(java.util.Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+        c.set(java.util.Calendar.MINUTE, minuteOfDay % 60)
+        c.set(java.util.Calendar.SECOND, 0)
+        c.set(java.util.Calendar.MILLISECOND, 0)
+        if (c.timeInMillis <= from) c.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        return c.timeInMillis
+    }
+
+    /** Fixes the stop moment for [pkg] from now: the next time its clock limit comes round. Removed if there is none. */
+    fun setDeadline(ctx: Context, pkg: String) {
+        val at = AppSettings.effectiveAt(ctx, pkg)
+        val e = deadlinePrefs(ctx).edit()
+        if (at > 0) e.putLong(pkg, nextOccurrence(at - 1, System.currentTimeMillis())) else e.remove(pkg)
+        e.apply()
+    }
+
+    /** After a clock limit was changed in Settings: running apps get their next stop moment from now. */
+    fun refreshDeadlines(ctx: Context) {
+        for (pkg in sessionPrefs(ctx).all.keys) setDeadline(ctx, pkg)
+    }
+
+    /** When [pkg] will be stopped by its clock limit (ms since epoch), or null if none applies. */
+    fun deadline(ctx: Context, pkg: String): Long? {
+        if (AppSettings.effectiveAt(ctx, pkg) <= 0) return null
+        return deadlinePrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+    }
+
+    fun clockText(ctx: Context, minuteOfDay: Int): String {
+        val c = java.util.Calendar.getInstance()
+        c.set(java.util.Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+        c.set(java.util.Calendar.MINUTE, minuteOfDay % 60)
+        return android.text.format.DateFormat.getTimeFormat(ctx).format(c.time)
+    }
+
+    /** Battery, temperature and clock limits that apply to [pkg], as "35% battery · 45°C · 7:00 AM". Null if none. */
+    fun limitsText(ctx: Context, pkg: String): String? {
+        val parts = ArrayList<String>()
+        AppSettings.effectiveBattery(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it% battery") }
+        AppSettings.effectiveTemp(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it°C") }
+        deadline(ctx, pkg)?.let { parts.add(deadlineText(ctx, it)) }
+        return if (parts.isEmpty()) null else "Stops at " + parts.joinToString(" · ")
+    }
+
+    /** "7:00 AM", or "tomorrow 7:00 AM" when it isn't today. */
+    fun deadlineText(ctx: Context, at: Long): String {
+        val clock = android.text.format.DateFormat.getTimeFormat(ctx).format(java.util.Date(at))
+        val day = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+        return if (day.format(java.util.Date(at)) == day.format(java.util.Date())) clock else "tomorrow $clock"
+    }
+
+    /** When [pkg]'s current session started (ms since epoch), or null if unknown. */
+    fun sessionStart(ctx: Context, pkg: String): Long? = sessionPrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+
+    /** Whole minutes [pkg] has been running here, or null if unknown. */
+    fun sessionMinutes(ctx: Context, pkg: String): Long? {
+        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        return if (t <= 0L) null else ((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0)
+    }
+
+    /** Minutes as "5m" / "2h 10m". */
+    fun fmtMinutes(mins: Long): String = when {
+        mins < 1 -> "<1m"
+        mins < 60 -> "${mins}m"
+        else -> "${mins / 60}h ${mins % 60}m"
+    }
+
+    /** How long [pkg] has been running here, as "5m" / "2h 10m", or null if unknown. */
+    fun sessionText(ctx: Context, pkg: String): String? {
+        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        if (t <= 0L) return null
+        return fmtMinutes(((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0))
+    }
+
+    /**
+     * Time left before auto-stop, as "18m left" / "1h 5m left", or null when no time limit applies
+     * to [pkg] (neither its own nor the default) or the start time is unknown.
+     */
+    fun remainingText(ctx: Context, pkg: String): String? {
+        val limit = AppSettings.effectiveMinutes(ctx, pkg)
+        if (limit <= 0) return null
+        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        if (t <= 0L) return null
+        val leftMs = limit * 60000L - (System.currentTimeMillis() - t)
+        if (leftMs <= 0L) return "stopping soon"
+        val mins = (leftMs + 59999L) / 60000L
+        return "${fmtMinutes(mins)} left"
+    }
+
+    // ---- display size settings ----
+
+    /** How big new hidden displays are. Saved on the phone, applies to displays created from now on. */
+    data class SizeCfg(val matchRatio: Boolean, val width: Int, val customH: Int, val dpi: Int)
+
+    const val DEF_WIDTH = 720
+    const val DEF_DPI = 320
+
+    private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("display", Context.MODE_PRIVATE)
+
+    fun sizeCfg(ctx: Context): SizeCfg {
+        val p = prefs(ctx)
+        return SizeCfg(
+            p.getBoolean("match", true),
+            p.getInt("w", DEF_WIDTH),
+            p.getInt("h", 1600),
+            p.getInt("dpi", DEF_DPI)
+        )
+    }
+
+    fun saveSizeCfg(ctx: Context, c: SizeCfg) {
+        prefs(ctx).edit().putBoolean("match", c.matchRatio).putInt("w", c.width)
+            .putInt("h", c.customH).putInt("dpi", c.dpi).apply()
+    }
+
+    // ---- per-app size (overrides the default only for that app) ----
+
+    private fun appSizePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("app_size", Context.MODE_PRIVATE)
+
+    fun appCfg(ctx: Context, pkg: String): SizeCfg? {
+        val v = appSizePrefs(ctx).getString(pkg, null) ?: return null
+        val p = v.split(",")
+        if (p.size != 4) return null
+        return SizeCfg(p[0] == "1", p[1].toIntOrNull() ?: return null, p[2].toIntOrNull() ?: return null, p[3].toIntOrNull() ?: return null)
+    }
+
+    /** Pass null to go back to the default size. */
+    fun setAppCfg(ctx: Context, pkg: String, c: SizeCfg?) {
+        val e = appSizePrefs(ctx).edit()
+        if (c == null) e.remove(pkg) else e.putString(pkg, "${if (c.matchRatio) 1 else 0},${c.width},${c.customH},${c.dpi}")
+        e.apply()
+    }
+
+    private fun even(v: Int) = v and 1.inv()
+
+    /** The (width, height, dpi) a new display would get. Width/height are already swapped for landscape. */
+    fun sizeFor(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null): Triple<Int, Int, Int> {
+        val c = cfg ?: sizeCfg(ctx)
+        val dm = ctx.resources.displayMetrics
+        val ratio = maxOf(dm.heightPixels, dm.widthPixels).toFloat() / minOf(dm.heightPixels, dm.widthPixels)
+        // Portrait shape first: w is the short side, h the long side.
+        var w = even(c.width.coerceIn(240, 2160))
+        var h = if (c.matchRatio) (w * ratio).toInt() else c.customH
+        h = even(h.coerceIn(240, 3840))
+        val dpi = c.dpi.coerceIn(120, 640)
+        return if (landscape) Triple(h, w, dpi) else Triple(w, h, dpi)
+    }
+
+    /**
+     * The rate a new display should really get for a wanted [hz]. The display is paced by the phone's
+     * screen, so a rate that isn't a divisor of one of the screen's modes judders (75 Hz on a
+     * 60/90/120 screen, or anything above the maximum). Those are moved to the nearest mode that
+     * works; 0 (Auto) stays 0.
+     */
+    fun snapRate(ctx: Context, hz: Int): Int {
+        if (hz <= 0) return 0
+        return try {
+            val dm = ctx.getSystemService(android.hardware.display.DisplayManager::class.java)
+            val d = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val cur = d.mode
+            val rates = d.supportedModes
+                .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+                .map { Math.round(it.refreshRate) }.distinct().sorted()
+            val out = when {
+                rates.isEmpty() -> hz
+                rates.any { it % hz == 0 } -> hz
+                else -> rates.firstOrNull { it >= hz } ?: rates.last()
+            }
+            if (out != hz) log("Refresh rate $hz Hz -> $out Hz (screen modes: ${rates.joinToString()} Hz)")
+            out
+        } catch (_: Throwable) { hz }
+    }
+
+    /** The rate [pkg] gets on its next display, already adjusted for the screen. */
+    fun refreshFor(ctx: Context, pkg: String): Int = snapRate(ctx, AppSettings.effectiveRefreshRate(ctx, pkg))
+
+    /** Creates a display and returns its id, or -1 on failure. */
+    fun createDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
+        val s = service ?: run { log("Not connected"); return -1 }
+        val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
+        val r = try { s.createDisplay(w, h, dpi, fps) } catch (t: Throwable) { "ERR: $t" }
+        log("createDisplay: $r")
+        var id = -1
+        if (r.startsWith("OK:")) {
+            id = r.removePrefix("OK:").substringBefore(' ').toIntOrNull() ?: -1
+            if (id >= 0) requestedLandscape[id] = landscape
+            refreshInfo()
+            if (fps > 0) log("display #$id refresh as Android reports it:\n" +
+                exec("dumpsys display | grep -i hiderlab | cut -c1-400"))
+            try {
+                ctx.applicationContext.startForegroundService(Intent(ctx.applicationContext, HostService::class.java))
+            } catch (t: Throwable) { log("Notification service not started: $t") }
+        }
+        changed()
+        return id
+    }
+
+    /** The hidden display [pkg] is already running on, or null. */
+    fun displayOf(pkg: String): Int? = displays.firstOrNull { d -> tasks(d.id).any { it.second == pkg } }?.id
+
+    /**
+     * Every app gets its own display. Android only keeps the top app on a display resumed, so a
+     * second app on the same display would freeze the first. An empty display of the right
+     * size is reused; otherwise a new one is created. Returns its id, or -1.
+     */
+    fun freeDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
+        // Only reuse a display that already has exactly the size and refresh rate a new one would get now.
+        val (w, h, dpi) = sizeFor(ctx, landscape, cfg)
+        return displays.firstOrNull { it.w == w && it.h == h && it.landscape == landscape && (it.dpi == 0 || it.dpi == dpi) && it.fps == fps && tasks(it.id).isEmpty() }?.id
+            ?: createDisplay(ctx, landscape, cfg, fps)
+    }
+
+    fun launch(ctx: Context, pkg: String, display: Int): String {
+        val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
+            ?: return "No launcher activity for $pkg"
+        // Apps always start with sound on. Mute again from the app's menu if wanted.
+        setMutedPref(ctx, pkg, false)
+        applyAudio(pkg, false)
+        markSession(ctx, pkg)
+        clearCrash(ctx, pkg)
+        clearAutoStop(ctx, pkg) // it is running again
+        displays.firstOrNull { it.id == display }?.let { orientPrefs(ctx).edit().putBoolean(pkg, it.landscape).apply() }
+        // If it is already open on the main screen, try to move that task instead of starting a copy.
+        val onMain = tasks(0).firstOrNull { it.second == pkg }
+        if (onMain != null) {
+            val r = exec("am display move-stack ${onMain.first} $display")
+            if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
+            log("move-stack failed, starting fresh: $r")
+        }
+        // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off in Settings. Android only reads
+        // EXCLUDE_FROM_RECENTS when it creates or resets a task. If the app already has a leftover task
+        // (still listed in Recents from an earlier run), the flag is ignored and the entry stays.
+        // CLEAR_TASK resets that task so the flag takes effect on it too.
+        val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 or 0x00008000 else LAUNCH_FLAGS // EXCLUDE_FROM_RECENTS | CLEAR_TASK
+        val started = exec("am start --display $display -f $flags -n $comp")
+        return started
+    }
+
+    /**
+     * False only when Android says outright that this phone cannot run apps on secondary displays
+     * (low-RAM / Go builds, for example). Then launches always end up on the main screen.
+     */
+    fun supportsSecondaryDisplays(): Boolean =
+        exec("cmd package has-feature android.software.activities_on_secondary_displays").trim() != "false"
+
+    // ---- unexpected exits ----
+
+    /** An app PocketScreen launched whose process died without us stopping it. */
+    data class Crash(val pkg: String, val whenMs: Long, val reason: String, val landscape: Boolean)
+
+    private fun crashPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("crashes", Context.MODE_PRIVATE)
+    private fun orientPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("orient", Context.MODE_PRIVATE)
+
+    fun crashes(ctx: Context): List<Crash> = crashPrefs(ctx).all.mapNotNull { (pkg, v) ->
+        val p = (v as? String)?.split("|", limit = 3) ?: return@mapNotNull null
+        val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+        Crash(pkg, t, p.getOrNull(2).orEmpty(), p.getOrNull(1) == "1")
+    }.sortedByDescending { it.whenMs }
+
+    // ---- apps stopped by an auto-stop limit ----
+
+    /** [kind] is "Temperature", "Battery" or "Timer"; [ranMin] is how long the app had been running. */
+    data class AutoStop(val pkg: String, val whenMs: Long, val ranMin: Long, val kind: String, val detail: String, val landscape: Boolean)
+
+    private fun stopPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("autostops", Context.MODE_PRIVATE)
+
+    fun recordAutoStop(ctx: Context, pkg: String, kind: String, detail: String) {
+        val ran = sessionMinutes(ctx, pkg) ?: 0L
+        val land = orientPrefs(ctx).getBoolean(pkg, false)
+        stopPrefs(ctx).edit().putString(pkg, listOf(System.currentTimeMillis(), ran, if (land) 1 else 0, kind, detail).joinToString("|")).apply()
+    }
+
+    /** Kept until the user dismisses or relaunches the app. */
+    fun autoStops(ctx: Context): List<AutoStop> = stopPrefs(ctx).all.mapNotNull { (pkg, v) ->
+        val p = (v as? String)?.split("|", limit = 5) ?: return@mapNotNull null
+        val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+        AutoStop(pkg, t, p.getOrNull(1)?.toLongOrNull() ?: 0L, p.getOrNull(3).orEmpty(), p.getOrNull(4).orEmpty(), p.getOrNull(2) == "1")
+    }.sortedByDescending { it.whenMs }
+
+    fun clearAutoStop(ctx: Context, pkg: String) { stopPrefs(ctx).edit().remove(pkg).apply() }
+
+    fun clearCrash(ctx: Context, pkg: String) {
+        crashPrefs(ctx).edit().remove(pkg).apply()
+        HostService.cancelCrash(ctx, pkg) // the notification goes away with the entry
+    }
+
+    /** Why the system says [pkg]'s last process ended, e.g. "CRASH" or "EXIT_SELF". Null if it can't be read. */
+    private fun lastExitReason(pkg: String): String? {
+        val out = exec("dumpsys activity exit-info $pkg")
+        return Regex("reason=\\d+ \\(([A-Z_ ]+)\\)").find(out)?.groupValues?.get(1)?.trim()
+    }
+
+    private val EXPECTED_EXITS = setOf("EXIT_SELF", "USER_REQUESTED", "USER_STOPPED", "PACKAGE_UPDATED", "PACKAGE_STATE_CHANGE", "PERMISSION_CHANGE")
+
+    /**
+     * Looks for apps we launched that are no longer on any hidden display, whose process is gone, and
+     * that we did not stop ourselves. Those are recorded as unexpected exits. Returns the new ones.
+     * [onDisplays] are the packages currently on a hidden display, [busy] are being launched right now.
+     */
+    fun checkCrashes(ctx: Context, onDisplays: Set<String>, busy: Set<String>): List<Crash> {
+        if (service == null) return emptyList()
+        val found = ArrayList<Crash>()
+        val now = System.currentTimeMillis()
+        // An app that is running again (for example opened from the app drawer) is no longer "closed".
+        for (c in crashes(ctx)) {
+            val p = exec("pidof ${c.pkg}").trim()
+            if (p.firstOrNull()?.isDigit() == true) clearCrash(ctx, c.pkg)
+        }
+        // Only listed when an app we started is missing from the hidden displays.
+        val onMain by lazy { tasks(0).map { it.second }.toSet() }
+        for ((pkg, v) in sessionPrefs(ctx).all) {
+            val started = v as? Long ?: continue
+            if (pkg in onDisplays || pkg in busy || now - started < 10_000L) continue
+            if (pkg in onMain) { // the user moved it to the main screen: a hand-off, not a crash
+                clearSession(ctx, pkg)
+                restoreAudio(ctx, pkg)
+                clearCrash(ctx, pkg)
+                continue
+            }
+            val pid = exec("pidof $pkg").trim()
+            if (pid.startsWith("ERR") ) continue
+            if (pid.isNotEmpty() && pid.firstOrNull()?.isDigit() == true) continue // still alive, just not on a display
+            val reason = lastExitReason(pkg)
+            clearSession(ctx, pkg)
+            restoreAudio(ctx, pkg)
+            if (reason != null && reason in EXPECTED_EXITS) continue
+            val c = Crash(pkg, now, reason?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Reason unknown",
+                orientPrefs(ctx).getBoolean(pkg, false))
+            crashPrefs(ctx).edit().putString(pkg, "${c.whenMs}|${if (c.landscape) 1 else 0}|${c.reason}").apply()
+            log("Unexpected exit: $pkg (${c.reason})")
+            found.add(c)
+        }
+        return found
+    }
+
+    /** Which display a package's task is on, according to the system, or null if no task is found. */
+    fun displayOfTask(pkg: String): Int? {
+        val out = exec("dumpsys activity activities | grep -E 'Display #|mDisplayId=|Task\\{|ActivityRecord\\{' | grep -E 'Display #|$pkg'")
+        var current: Int? = null
+        for (line in out.lines()) {
+            Regex("Display #(\\d+)").find(line)?.let { current = it.groupValues[1].toInt() }
+            if (line.contains(pkg) && current != null) return current
+        }
+        return null
+    }
+
+    /** Facts about this phone that decide whether apps can run on a hidden display. For the debug log. */
+    fun diagnose(pkg: String, display: Int): String {
+        fun sh(c: String) = exec(c).trim().lines().take(12).joinToString("\n")
+        return buildString {
+            appendLine("--- Why did $pkg not start on display $display? ---")
+            appendLine("model: " + sh("getprop ro.product.model") + ", android " + sh("getprop ro.build.version.release") + " (sdk " + sh("getprop ro.build.version.sdk") + ")")
+            appendLine("low_ram: " + sh("getprop ro.config.low_ram"))
+            appendLine("secondary-display feature: " + sh("cmd package has-feature android.software.activities_on_secondary_displays"))
+            appendLine("freeform feature: " + sh("cmd package has-feature android.software.freeform_window_management"))
+            appendLine("picture-in-picture feature: " + sh("cmd package has-feature android.software.picture_in_picture"))
+            appendLine("force_resizable: " + sh("settings get global force_resizable_activities"))
+            appendLine("freeform setting: " + sh("settings get global enable_freeform_support"))
+            appendLine("non-resizable multi-window: " + sh("settings get global enable_non_resizable_multi_window"))
+            appendLine("task display: " + displayOfTask(pkg))
+        }
+    }
+
+    private fun stopHostIfIdle(ctx: Context) {
+        if (displays.isEmpty()) {
+            try { ctx.applicationContext.stopService(Intent(ctx.applicationContext, HostService::class.java)) } catch (_: Throwable) {}
+        }
+    }
+
+    /** Removes a display without touching the apps on it. */
+    fun releaseOnly(ctx: Context, id: Int) {
+        try { service?.releaseDisplay(id) } catch (_: Throwable) {}
+        refreshInfo()
+        stopHostIfIdle(ctx)
+        changed()
+    }
+
+    /** Force-stops the apps on one display, then removes it. */
+    fun destroyDisplay(ctx: Context, id: Int) {
+        tasks(id).map { it.second }.distinct().forEach { stopApp(ctx, it) }
+        releaseOnly(ctx, id)
+    }
+
+    fun stopAll(ctx: Context) {
+        displays.map { it.id }.forEach { destroyDisplay(ctx, it) }
+        displays = emptyList()
+        stopHostIfIdle(ctx)
+        changed()
+    }
+}
