@@ -2,45 +2,13 @@ package com.hiderlab.vd
 
 import android.content.Context
 
-/** User preferences that are plain on/off switches. */
+/** Persisted preferences. */
 object AppSettings {
     private fun p(c: Context) = c.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    /**
-     * Beta. New displays get their own keyboard: an app that focuses a text box raises it inside the
-     * display and resizes for it, and you type by tapping it in the viewer. Off = the phone's keyboard.
-     */
-
-    /**
-     * Beta. While the phone's keyboard is open in the viewer, the display is made shorter by the
-     * keyboard's height, so the app resizes and its bottom (key rows, input line) stays visible.
-     */
-
-    /** When on, the keyboard only appears from the keyboard icon in the viewer. Off by default. */
-    fun suppressKeyboard(c: Context): Boolean = p(c).getBoolean("suppress_kb", false)
-    fun setSuppressKeyboard(c: Context, on: Boolean) { p(c).edit().putBoolean("suppress_kb", on).apply() }
-
-    /** When on (default), the back gesture in the viewer is sent to the app. Off: it is swallowed. */
-    fun backGesture(c: Context): Boolean = p(c).getBoolean("back_gesture", true)
-    fun setBackGesture(c: Context, on: Boolean) { p(c).edit().putBoolean("back_gesture", on).apply() }
-
-    /** Per-app overrides for the two viewer options above. -1 = use the Settings value, 0 = off, 1 = on. */
-    fun appBackGesture(c: Context, pkg: String): Int = p(c).getInt("back_$pkg", -1)
-    fun setAppBackGesture(c: Context, pkg: String, v: Int) { p(c).edit().putInt("back_$pkg", v).apply() }
-    fun appSuppressKeyboard(c: Context, pkg: String): Int = p(c).getInt("kb_$pkg", -1)
-    fun setAppSuppressKeyboard(c: Context, pkg: String, v: Int) { p(c).edit().putInt("kb_$pkg", v).apply() }
-    fun effectiveBackGesture(c: Context, pkg: String): Boolean =
-        appBackGesture(c, pkg).let { if (it < 0) backGesture(c) else it == 1 }
-    fun effectiveSuppressKeyboard(c: Context, pkg: String): Boolean =
-        appSuppressKeyboard(c, pkg).let { if (it < 0) suppressKeyboard(c) else it == 1 }
-
-    /** Launch apps with "exclude from Recents" so they don't show there while on a hidden display. On by default. */
+    /** Launch apps with "exclude from Recents" while on a hidden display. On by default. */
     fun hideFromRecents(c: Context): Boolean = p(c).getBoolean("hide_recents", true)
     fun setHideFromRecents(c: Context, on: Boolean) { p(c).edit().putBoolean("hide_recents", on).apply() }
-
-    /** On Android 12+, use the system (wallpaper) colors. Off by default. */
-    fun dynamicColor(c: Context): Boolean = p(c).getBoolean("dynamic_color", false)
-    fun setDynamicColor(c: Context, on: Boolean) { p(c).edit().putBoolean("dynamic_color", on).apply() }
 
     /** Stop everything when the battery is at or below this percent and not charging. 0 = off. */
     fun autoStopBattery(c: Context): Int = p(c).getInt("auto_battery", 0)
@@ -61,11 +29,7 @@ object AppSettings {
     fun autoStopAt(c: Context): Int = p(c).getInt("auto_at", 0)
     fun setAutoStopAt(c: Context, v: Int) { p(c).edit().putInt("auto_at", v).apply() }
 
-    /** Show memory and CPU on each running app. On by default; turning it off makes refreshing faster. */
-    fun showStats(c: Context): Boolean = p(c).getBoolean("show_stats", true)
-    fun setShowStats(c: Context, on: Boolean) { p(c).edit().putBoolean("show_stats", on).apply() }
-
-    /** Per-app auto-stop. -1 means "use the default from Settings", 0 means off. */
+    /** Per-app auto-stop. -1 means "use the default", 0 means off. */
     fun appBattery(c: Context, pkg: String): Int = p(c).getInt("auto_bat_$pkg", -1)
     fun setAppBattery(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_bat_$pkg", v).apply() }
     fun appTemp(c: Context, pkg: String): Int = p(c).getInt("auto_temp_$pkg", -1)
@@ -85,7 +49,7 @@ object AppSettings {
     const val MAX_HZ = 144
     fun refreshRate(c: Context): Int = p(c).getInt("refresh_hz", 0)
     fun setRefreshRate(c: Context, v: Int) { p(c).edit().putInt("refresh_hz", v).apply() }
-    /** Per-app rate. -1 = use the Settings value, 0 = the phone's own rate. */
+    /** Per-app rate. -1 = use the default value, 0 = the phone's own rate. */
     fun appRefreshRate(c: Context, pkg: String): Int = p(c).getInt("hz_$pkg", -1)
     fun setAppRefreshRate(c: Context, pkg: String, v: Int) { p(c).edit().putInt("hz_$pkg", v).apply() }
     fun effectiveRefreshRate(c: Context, pkg: String): Int =

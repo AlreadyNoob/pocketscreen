@@ -39,7 +39,7 @@ class VdService : IVdService.Stub() {
         val dm: Any,
         val cb: Any
     ) {
-        var viewerSurface: Surface? = null
+        var outputSurface: Surface? = null
         /** Keeps this display's power group awake; see [keepAwake]. */
         var wakeToken: IBinder? = null
     }
@@ -99,9 +99,8 @@ class VdService : IVdService.Stub() {
 
     /**
      * A trusted virtual display has no keyboard of its own, so Android falls back to showing the
-     * keyboard of any app on it (Termux, a browser...) on the phone's main screen. Setting the
-     * display's IME policy to "hide" stops that. The viewer is unaffected: it types through its
-     * own window and sends the keys into the display.
+     * keyboard of any app on it on the phone's main screen. Setting the display's IME policy to
+     * "hide" stops that. Keys can still be sent into the display through [key], [keyEvent] and [typeText].
      */
     private fun hideImeOnDisplay(id: Int) {
         val r = applyImePolicy(id)
@@ -161,8 +160,8 @@ class VdService : IVdService.Stub() {
             .firstOrNull { it.name == "setVirtualDisplaySurface" }
             ?: error("setVirtualDisplaySurface not found")
         m.invoke(vd.dm, vd.cb, target)
-        val old = vd.viewerSurface
-        vd.viewerSurface = s
+        val old = vd.outputSurface
+        vd.outputSurface = s
         if (old != null && old !== s) try { old.release() } catch (_: Throwable) {}
     }
 
@@ -440,7 +439,7 @@ class VdService : IVdService.Stub() {
                 .getMethod("releaseVirtualDisplay", Class.forName("android.hardware.display.IVirtualDisplayCallback"))
                 .invoke(vd.dm, vd.cb)
         } catch (_: Throwable) {}
-        try { vd.viewerSurface?.release() } catch (_: Throwable) {}
+        try { vd.outputSurface?.release() } catch (_: Throwable) {}
         try { vd.reader.close() } catch (_: Throwable) {}
         try { vd.thread.quitSafely() } catch (_: Throwable) {}
     }

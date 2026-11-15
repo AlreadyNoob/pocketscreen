@@ -1,13 +1,8 @@
 package com.hiderlab.vd
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.graphics.drawable.Icon
 import android.os.Build
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -18,41 +13,10 @@ import android.os.IBinder
 import android.os.PowerManager
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Foreground service: keeps this app's process alive while the hidden display is up. */
+/** Service that runs the limit checks while a hidden display is up. */
 class HostService : Service() {
 
-    companion object {
-        const val ACTION_STOP_ALL = "com.hiderlab.vd.STOP_ALL"
-        private const val CHANNEL = "hidden_display"
-        private const val ALERT_CHANNEL = "app_alerts"
-
-        fun cancelCrash(ctx: android.content.Context, pkg: String) {
-            try { ctx.getSystemService(NotificationManager::class.java).cancel(pkg.hashCode()) } catch (_: Throwable) {}
-        }
-
-        /** Tells the user an app closed unexpectedly. Silently skipped if notifications are not allowed. */
-        fun notifyCrash(ctx: android.content.Context, c: Vd.Crash) {
-            try {
-                val nm = ctx.getSystemService(NotificationManager::class.java)
-                nm.createNotificationChannel(NotificationChannel(ALERT_CHANNEL, "App alerts", NotificationManager.IMPORTANCE_DEFAULT))
-                val open = PendingIntent.getActivity(
-                    ctx, 2, Intent(ctx, MainActivity::class.java),
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-                val n = Notification.Builder(ctx, ALERT_CHANNEL)
-                    .setSmallIcon(android.R.drawable.stat_notify_error)
-                    .setContentTitle("${Apps.label(ctx, c.pkg)} closed unexpectedly")
-                    .setContentText("Tap to open PocketScreen and relaunch it.")
-                    .setContentIntent(open)
-                    .setAutoCancel(true)
-                    .build()
-                nm.notify(c.pkg.hashCode(), n)
-            } catch (_: Throwable) {}
-        }
-    }
-
     @Volatile private var watching = false
-    @Volatile private var lastSig = ""
     private val alarmAction = "com.hiderlab.vd.WATCHDOG"
     private var wakeLock: PowerManager.WakeLock? = null
     private var alarmRegistered = false
@@ -80,7 +44,7 @@ class HostService : Service() {
      * while the pass runs, and the next alarm is set for when something could actually need attention:
      * every 30 s while the screen is on; with it off, as late as the limits allow (see [nextDelay]).
      * A time limit gets an alarm at the moment it runs out. Changes the app makes itself reach the
-     * notification straight away through [changeListener].
+     * service straight away through [changeListener].
      */
     private val alarmReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -208,58 +172,27 @@ class HostService : Service() {
         return next
     }
 
-    private val changeListener = Runnable { Thread { refreshNotification() }.start() }
+    private val changeListener = Runnable { Thread { refreshApps() }.start() }
 
     /** Apps currently running on the hidden displays. One task listing per display. */
     private fun scanApps(): List<String> =
         Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct()
 
-    private fun statusText(apps: List<String>): String = when (apps.size) {
-        0 -> "No apps running"
-        1 -> "1 app running in the background"
-        else -> "${apps.size} apps running in the background"
-    }
-
-    /** Reads the live display list and updates the notification. Runs when the app changes a display. */
-    private fun refreshNotification() {
+    /** Reads the live display list and remembers the apps on it. Runs when the app changes a display. */
+    private fun refreshApps() {
         if (!watching) return
         // Read the live display list first: the cached one can still hold a display that was just
         // removed, and while the service is unreachable nothing counts as running.
         val apps = try {
             if (Vd.service == null) emptyList() else { Vd.refreshInfo(); scanApps() }
         } catch (_: Throwable) { return }
-        showApps(apps)
+        updateApps(apps)
     }
 
-    /** Remembers [apps] and rebuilds the ongoing notification if the set has changed. */
-    private fun showApps(apps: List<String>) {
+    /** Remembers [apps] and re-plans the next alarm. */
+    private fun updateApps(apps: List<String>) {
         cachedApps = apps
         Thread { scheduleNext() }.start() // the plan depends on which apps are running
-        val sig = apps.sorted().toString()
-        if (sig == lastSig) return
-        lastSig = sig
-        try { getSystemService(NotificationManager::class.java).notify(1, buildNotification(apps)) } catch (_: Throwable) {}
-    }
-
-    private fun buildNotification(apps: List<String>): Notification {
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, HostService::class.java).setAction(ACTION_STOP_ALL),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        return Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_pocketscreen)
-            .setContentTitle("PocketScreen")
-            .setContentText(statusText(apps))
-            .setContentIntent(open)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .addAction(Notification.Action.Builder(Icon.createWithResource(this, android.R.drawable.ic_delete), "Stop all", stop).build())
-            .build()
     }
 
     private val checking = AtomicBoolean(false)
@@ -276,7 +209,7 @@ class HostService : Service() {
     }
 
     /**
-     * [fresh] = true scans the displays, refreshes the notification and checks for crashed apps as well
+     * [fresh] = true scans the displays and checks for crashed apps as well
      * (the timed pass). false only checks the limits against the last scan (battery or temperature changed).
      */
     private fun checkLimits(ctx: Context, fresh: Boolean) {
@@ -296,15 +229,15 @@ class HostService : Service() {
     }
 
     private fun doFullPass(ctx: Context) {
-        if (Vd.service == null) { Vd.connect(ctx); showApps(emptyList()); return }
+        if (Vd.service == null) { Vd.connect(ctx); updateApps(emptyList()); return }
         Vd.refreshInfo()
-        // One scan serves the notification, the crash check and the limits.
+        // One scan serves the crash check and the limits.
         val apps = scanApps()
-        showApps(apps)
+        updateApps(apps)
         // Note apps that died on their own, even if their display is already gone. A failure here
         // must not stop the limits below from being checked.
         try {
-            for (c in Vd.checkCrashes(ctx, apps.toSet(), emptySet())) notifyCrash(ctx, c)
+            Vd.checkCrashes(ctx, apps.toSet(), emptySet())
         } catch (t: Throwable) { Debug.write("crash check: $t") }
         if (Vd.displays.isEmpty()) return
         evaluateLimits(ctx, apps)
@@ -322,7 +255,7 @@ class HostService : Service() {
         val tempC: Float? = b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
             ?.takeIf { it != Int.MIN_VALUE }?.let { it / 10f }
 
-        // Each app uses its own limits, or the defaults from Settings if it has none. Whatever trips,
+        // Each app uses its own limits, or the defaults if it has none. Whatever trips,
         // the result is the same: the app is force-stopped and its display is removed.
         for (pkg in apps) {
             val tempLimit = AppSettings.effectiveTemp(ctx, pkg)
@@ -330,24 +263,24 @@ class HostService : Service() {
             val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
             val ran = Vd.sessionMinutes(ctx, pkg)
             val clockAt = Vd.deadline(ctx, pkg)
-            // kind is what the user sees as the reason, detail has the numbers.
+            // kind is the limit type, detail has the numbers.
             var kind = ""
             var detail = ""
             val reason = when {
                 tempLimit > 0 && tempC != null && tempC >= tempLimit -> {
-                    kind = "Temperature"; detail = "Phone reached $tempC°C (limit $tempLimit°C)"
+                    kind = "temperature"; detail = "$tempC|$tempLimit"
                     "phone overheating, $tempC°C >= $tempLimit°C"
                 }
                 batLimit > 0 && !charging && pct <= batLimit -> {
-                    kind = "Battery"; detail = "Battery fell to $pct% (limit $batLimit%)"
+                    kind = "battery"; detail = "$pct|$batLimit"
                     "battery $pct% <= $batLimit%"
                 }
                 maxMin > 0 && ran != null && ran >= maxMin -> {
-                    kind = "Timer"; detail = "Time limit of ${Vd.fmtMinutes(maxMin.toLong())} reached"
+                    kind = "timer"; detail = "$maxMin"
                     "ran ${ran}m >= ${maxMin}m"
                 }
                 clockAt != null && System.currentTimeMillis() >= clockAt -> {
-                    kind = "Time of day"; detail = "Set for ${Vd.clockText(ctx, AppSettings.effectiveAt(ctx, pkg) - 1)}"
+                    kind = "clock"; detail = "${AppSettings.effectiveAt(ctx, pkg) - 1}"
                     "clock limit reached"
                 }
                 else -> null
@@ -365,23 +298,6 @@ class HostService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP_ALL) {
-            val ctx = applicationContext
-            Thread { Vd.stopAll(ctx) }.start()
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Hidden display", NotificationManager.IMPORTANCE_LOW))
-
-        // No binder calls on the main thread: show a placeholder now, the background refresh fills in the count.
-        lastSig = ""
-        val n = buildNotification(emptyList())
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(1, n)
-        }
         Vd.listeners.remove(changeListener)
         Vd.listeners.add(changeListener)
         if (!batteryRegistered) {
@@ -391,7 +307,7 @@ class HostService : Service() {
             batteryRegistered = true
         }
         startWatchdog()
-        Thread { refreshNotification() }.start()
+        Thread { refreshApps() }.start()
         return START_NOT_STICKY
     }
 }
