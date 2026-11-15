@@ -82,7 +82,7 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(16), dp(12), dp(16), dp(110)) // bottom room for the docked button
+        root.setPadding(dp(20), dp(10), dp(20), dp(120)) // bottom room for the floating button
         scroll.addView(root)
         frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         setContentView(frame)
@@ -92,37 +92,33 @@ class MainActivity : Activity() {
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
-        val logo = LogoView(this, 40)
+        val logo = LogoView(this, 38)
         val logoLp = LinearLayout.LayoutParams(-2, -2)
-        logoLp.rightMargin = dp(10)
+        logoLp.rightMargin = dp(12)
         head.addView(logo, logoLp)
-        val titles = LinearLayout(this)
-        titles.orientation = LinearLayout.VERTICAL
-        titles.addView(Ui.text(this, "PocketScreen", 21f, Ui.TEXT, bold = true))
-        titles.addView(Ui.text(this, "Apps that stay awake", 12f, Ui.MUTED))
-        head.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
-        val gearBtn = IconView(this, IconView.SETTINGS, 36)
+        head.addView(Ui.text(this, "PocketScreen", 26f, Ui.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        val gearBtn = IconView(this, IconView.SETTINGS, 44)
+        gearBtn.tint = Ui.TEXT
         gearBtn.contentDescription = "Settings"
-        gearBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 12f), Ui.hair(), dp(1)), Ui.dpf(this, 12f))
+        gearBtn.background = Ui.circleRipple()
         gearBtn.setOnClickListener { showSettings() }
-        val gearLp = LinearLayout.LayoutParams(-2, -2)
-        gearLp.rightMargin = dp(10)
-        head.addView(gearBtn, gearLp)
-        moreBtn = IconView(this, IconView.MORE, 36)
+        head.addView(gearBtn, LinearLayout.LayoutParams(-2, -2))
+        moreBtn = IconView(this, IconView.MORE, 44)
+        moreBtn.tint = Ui.TEXT
         moreBtn.contentDescription = "More options"
-        moreBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 12f), Ui.hair(), dp(1)), Ui.dpf(this, 12f))
+        moreBtn.background = Ui.circleRipple()
         moreBtn.setOnClickListener { showMainMenu() }
-        head.addView(moreBtn, LinearLayout.LayoutParams(-2, -2))
+        head.addView(moreBtn, LinearLayout.LayoutParams(-2, -2).also { it.leftMargin = dp(2) })
         Ui.add(root, head, top = 0)
 
         chipsRow = LinearLayout(this)
         chipsRow.orientation = LinearLayout.HORIZONTAL
-        Ui.add(root, chipsRow, top = 14)
+        Ui.add(root, chipsRow, top = 18)
 
         // setup card: only shown while something still needs doing
         setupCard = Ui.card(this)
-        setupCard.setPadding(dp(15), dp(15), dp(15), dp(15))
-        setupCard.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 22f))
+        setupCard.setPadding(dp(20), dp(20), dp(20), dp(20))
+        setupCard.background = Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 28f))
         setupCard.addView(Ui.text(this, "Finish setup", 15f, Ui.TEXT, bold = true))
         helperView = Ui.text(this, "", 12f, Ui.MUTED)
         helperView.setLineSpacing(0f, 1.15f)
@@ -142,12 +138,12 @@ class MainActivity : Activity() {
             android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
             intArrayOf(Ui.BG, (Ui.BG and 0x00FFFFFF))
         )
-        frame.addView(fade, FrameLayout.LayoutParams(-1, dp(100), Gravity.BOTTOM))
+        frame.addView(fade, FrameLayout.LayoutParams(-1, dp(130), Gravity.BOTTOM))
 
         // launch: extended floating action button
         btnLaunch = Ui.fab(this, "Launch app") { pickApp() }
-        val fl = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM)
-        fl.setMargins(dp(16), 0, dp(16), dp(18))
+        val fl = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        fl.setMargins(0, 0, 0, dp(24))
         frame.addView(btnLaunch, fl)
 
         // running apps and the displays they use, in one list
@@ -155,7 +151,7 @@ class MainActivity : Activity() {
         addSection(root, "Running now", runningCount)
         tasksBox = LinearLayout(this)
         tasksBox.orientation = LinearLayout.VERTICAL
-        Ui.add(root, tasksBox, top = 9)
+        Ui.add(root, tasksBox, top = 12)
 
         // quick launch
         presetsHeader = LinearLayout(this)
@@ -165,7 +161,7 @@ class MainActivity : Activity() {
         Ui.add(root, presetsHeader)
         presetsBox = LinearLayout(this)
         presetsBox.orientation = LinearLayout.VERTICAL
-        Ui.add(root, presetsBox, top = 9)
+        Ui.add(root, presetsBox, top = 12)
 
         // Load the app list and icons in the background now, so the picker opens instantly later.
         Apps.load(applicationContext)
@@ -203,7 +199,7 @@ class MainActivity : Activity() {
         row.gravity = Gravity.CENTER_VERTICAL
         row.addView(Ui.sectionTitle(this, title), LinearLayout.LayoutParams(0, -2, 1f))
         if (trailing != null) row.addView(trailing)
-        Ui.add(parent, row, top = 16)
+        Ui.add(parent, row, top = 26)
     }
 
     override fun onResume() {
@@ -309,18 +305,12 @@ class MainActivity : Activity() {
         val disp = Vd.displays
 
         chipsRow.removeAllViews()
-        val chips: List<Triple<String, String, Int?>> = listOf(
-            Triple("Shizuku", if (!ping) "Stopped" else if (!perm) "No access" else "Running",
-                if (!ping) Ui.BAD else if (!perm) Ui.WARN else Ui.OK),
-            Triple("Service", if (connected) "Connected" else if (perm) "Connecting" else "Offline",
-                if (connected) Ui.OK else if (perm) Ui.WARN else Ui.BAD),
-            Triple("Displays", "${disp.size} active", null)
-        )
-        for ((i, ch) in chips.withIndex()) {
-            val lp = LinearLayout.LayoutParams(0, -2, 1f)
-            if (i > 0) lp.leftMargin = dp(7)
-            chipsRow.addView(Ui.statusCell(this, ch.first, ch.second, ch.third), lp)
-        }
+        val sColor = if (!ping) Ui.BAD else if (!perm || !connected) Ui.WARN else Ui.OK
+        val sTitle = if (!ping) "Shizuku isn't running" else if (!perm) "Permission needed" else if (!connected) "Connecting…" else "Ready"
+        val nDisp = disp.size
+        val sDetail = (if (ping) "Shizuku running" else "Shizuku stopped") + " · " +
+            (if (nDisp == 0) "no displays" else if (nDisp == 1) "1 display" else "$nDisp displays")
+        chipsRow.addView(Ui.statusBar(this, sColor, sTitle, sDetail), LinearLayout.LayoutParams(-1, -2))
 
         helperView.text = when {
             !ping -> "Shizuku isn't running. Start it from wireless debugging, then come back."
@@ -343,7 +333,7 @@ class MainActivity : Activity() {
     private fun emptyNote(text: String): View {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(18), dp(22), dp(18), dp(22))
+        box.setPadding(dp(20), dp(30), dp(20), dp(30))
         val title = Ui.text(this, "Nothing running", 14f, Ui.TEXT, bold = true)
         title.gravity = Gravity.CENTER
         Ui.add(box, title)
@@ -352,8 +342,8 @@ class MainActivity : Activity() {
         body.setLineSpacing(0f, 1.2f)
         Ui.add(box, body, top = 4)
         val dash = android.graphics.drawable.GradientDrawable()
-        dash.cornerRadius = Ui.dpf(this, 20f)
-        dash.setStroke(Ui.dp(this, 2), Ui.hair(), Ui.dpf(this, 6f), Ui.dpf(this, 5f))
+        dash.cornerRadius = Ui.dpf(this, 24f)
+        dash.setStroke(Ui.dp(this, 2), Ui.OUTLINE, Ui.dpf(this, 6f), Ui.dpf(this, 5f))
         box.background = dash
         return box
     }
@@ -375,9 +365,10 @@ class MainActivity : Activity() {
 
     /** Round-square three-dot button, same look as the header buttons. */
     private fun moreButton(): IconView {
-        val b = IconView(this, IconView.MORE, 34)
+        val b = IconView(this, IconView.MORE, 40)
         b.contentDescription = "More options"
-        b.background = Ui.withRipple(Ui.shape(Ui.SURFACE, Ui.dpf(this, 12f), Ui.hair(), dp(1)), Ui.dpf(this, 12f))
+        b.tint = Ui.MUTED
+        b.background = Ui.circleRipple()
         return b
     }
 
@@ -386,7 +377,7 @@ class MainActivity : Activity() {
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
         row.minimumHeight = 0
-        row.setPadding(dp(13), dp(13), dp(13), dp(13))
+        row.setPadding(dp(16), dp(16), dp(12), dp(16))
         return row
     }
 
@@ -408,14 +399,14 @@ class MainActivity : Activity() {
         for ((pkg, landscape) in list) {
             val row = listRow()
             row.setOnClickListener { launchApp(pkg, landscape) } // one tap: start it now
-            row.setPadding(dp(11), dp(11), dp(11), dp(11))
-            row.addView(appIcon(pkg), LinearLayout.LayoutParams(dp(38), dp(38)))
+            row.setPadding(dp(16), dp(12), dp(10), dp(12))
+            row.addView(appIcon(pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
 
             val cfg = Vd.appCfg(this, pkg)
             val sz = Vd.sizeFor(this, landscape, cfg)
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
-            val name = Ui.text(this, Apps.label(this, pkg), 14f, Ui.TEXT, bold = true)
+            val name = Ui.text(this, Apps.label(this, pkg), 16f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             val nameRow = LinearLayout(this)
@@ -431,16 +422,16 @@ class MainActivity : Activity() {
             col.addView(Ui.text(this, "${if (landscape) "Landscape" else "Portrait"} · ${sz.first}×${sz.second} · ${sz.third} DPI", 11.5f, Ui.MUTED)
                 .also { it.isSingleLine = true; it.ellipsize = TextUtils.TruncateAt.END })
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
-            cp.leftMargin = dp(11)
+            cp.leftMargin = dp(14)
             row.addView(col, cp)
 
-            val play = IconView(this, IconView.PLAY, 36, false)
-            play.tint = Ui.ACCENT
-            play.background = Ui.withRipple(Ui.shape(Ui.ACCENT_CONT, Ui.dpf(this, 12f)), Ui.dpf(this, 12f))
+            val play = IconView(this, IconView.PLAY, 40, false)
+            play.tint = Ui.ON_ACCENT
+            play.background = Ui.withRipple(Ui.shape(Ui.ACCENT, Ui.dpf(this, 20f)), Ui.dpf(this, 20f))
             play.isClickable = true
             play.contentDescription = "Launch"
             play.setOnClickListener { launchApp(pkg, landscape) }
-            row.addView(play, LinearLayout.LayoutParams(dp(36), dp(36)).also { it.rightMargin = dp(8) })
+            row.addView(play, LinearLayout.LayoutParams(dp(40), dp(40)).also { it.rightMargin = dp(4) })
 
             val more = moreButton()
             more.background = null
@@ -454,7 +445,7 @@ class MainActivity : Activity() {
             row.addView(more)
             rows.add(row)
         }
-        Ui.cards(presetsBox, rows)
+        Ui.list(presetsBox, rows)
     }
 
     private data class Row(val display: Vd.Disp, val taskId: Int, val pkg: String)
@@ -543,10 +534,10 @@ class MainActivity : Activity() {
     private fun autoStopRow(a: Vd.AutoStop): View {
         val row = listRow()
         row.setOnClickListener { relaunchStopped(a) }
-        row.addView(appIcon(a.pkg), LinearLayout.LayoutParams(dp(42), dp(42)))
+        row.addView(appIcon(a.pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
-        val name = Ui.text(this, Apps.label(this, a.pkg), 14.5f, Ui.TEXT, bold = true)
+        val name = Ui.text(this, Apps.label(this, a.pkg), 16f, Ui.TEXT, bold = true)
         name.isSingleLine = true
         name.ellipsize = TextUtils.TruncateAt.END
         col.addView(name)
@@ -579,10 +570,10 @@ class MainActivity : Activity() {
         outer.isClickable = true
         outer.setOnClickListener { relaunch(c) }
         val row = listRow()
-        row.addView(appIcon(c.pkg), LinearLayout.LayoutParams(dp(42), dp(42)))
+        row.addView(appIcon(c.pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
-        val name = Ui.text(this, Apps.label(this, c.pkg), 14.5f, Ui.TEXT, bold = true)
+        val name = Ui.text(this, Apps.label(this, c.pkg), 16f, Ui.TEXT, bold = true)
         name.isSingleLine = true
         name.ellipsize = TextUtils.TruncateAt.END
         col.addView(name)
@@ -606,7 +597,7 @@ class MainActivity : Activity() {
             ))
         }
         row.addView(more)
-        row.setPadding(dp(13), dp(13), dp(13), dp(0))
+        row.setPadding(dp(16), dp(16), dp(12), dp(0))
         outer.addView(row)
         val mins = ((System.currentTimeMillis() - c.whenMs) / 60000L).coerceAtLeast(0)
         val chip = Ui.pill(this, "Crashed " + (if (mins < 1) "just now" else "${Vd.fmtMinutes(mins)} ago"),
@@ -614,7 +605,7 @@ class MainActivity : Activity() {
         chip.setPadding(dp(9), dp(5), dp(9), dp(5))
         chip.background = Ui.shape((Ui.BAD and 0x00FFFFFF) or 0x29000000, Ui.dpf(this, 9f))
         val chipRow = LinearLayout(this)
-        chipRow.setPadding(dp(13), dp(11), dp(13), dp(13))
+        chipRow.setPadding(dp(16), dp(12), dp(16), dp(16))
         chipRow.addView(chip, LinearLayout.LayoutParams(-2, -2))
         outer.addView(chipRow, LinearLayout.LayoutParams(-1, -2))
         return outer
@@ -649,11 +640,11 @@ class MainActivity : Activity() {
             outer.isClickable = true
             outer.setOnClickListener { openViewer(r.display.id) }
             val row = listRow()
-            row.addView(appIcon(r.pkg), LinearLayout.LayoutParams(dp(42), dp(42)))
+            row.addView(appIcon(r.pkg), LinearLayout.LayoutParams(dp(48), dp(48)))
 
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
-            val name = Ui.text(this, Apps.label(this, r.pkg), 14.5f, Ui.TEXT, bold = true)
+            val name = Ui.text(this, Apps.label(this, r.pkg), 16f, Ui.TEXT, bold = true)
             name.isSingleLine = true
             name.ellipsize = TextUtils.TruncateAt.END
             col.addView(name)
@@ -666,7 +657,7 @@ class MainActivity : Activity() {
                 val p = Ui.pill(this, label, fg, bg, 11f)
                 p.isSingleLine = true
                 p.setPadding(dp(9), dp(5), dp(9), dp(5))
-                p.background = Ui.shape(bg, Ui.dpf(this, 9f))
+                p.background = Ui.shape(bg, Ui.dpf(this, 14f))
                 val lp = LinearLayout.LayoutParams(-2, -2)
                 if (pills.childCount > 0) lp.leftMargin = dp(6)
                 pills.addView(p, lp)
@@ -699,7 +690,7 @@ class MainActivity : Activity() {
                 ) + (if (shared) listOf(Ui.MenuItem("Move to its own display") { moveToOwnDisplay(r) }) else emptyList()))
             }
             val muteBtn = IconView(this, if (muted) IconView.MUTED else IconView.VOLUME, 34)
-            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 13f)), Ui.dpf(this, 13f))
+            muteBtn.background = Ui.withRipple(Ui.shape(Ui.SURFACE2, Ui.dpf(this, 17f)), Ui.dpf(this, 17f))
             muteBtn.tint = if (muted) Ui.MUTED else Ui.ACCENT
             muteBtn.contentDescription = if (muted) "Unmute sound" else "Mute sound"
             muteBtn.setOnClickListener {
@@ -714,14 +705,14 @@ class MainActivity : Activity() {
             outer.addView(row)
             val limits = Vd.limitsText(this, r.pkg)
             if (pills.childCount > 0 || limits != null) {
-                row.setPadding(dp(13), dp(13), dp(13), if (pills.childCount > 0) 0 else dp(8))
+                row.setPadding(dp(16), dp(16), dp(12), if (pills.childCount > 0) 0 else dp(8))
                 if (pills.childCount > 0) {
-                    pills.setPadding(dp(13), dp(11), dp(12), if (limits != null) dp(8) else dp(13))
+                    pills.setPadding(dp(16), dp(12), dp(16), if (limits != null) dp(8) else dp(16))
                     outer.addView(pills, LinearLayout.LayoutParams(-1, -2))
                 }
                 if (limits != null) {
                     val lt = Ui.text(this, limits, 11f, Ui.MUTED)
-                    lt.setPadding(dp(13), 0, dp(12), dp(13))
+                    lt.setPadding(dp(16), 0, dp(16), dp(16))
                     outer.addView(lt, LinearLayout.LayoutParams(-1, -2))
                 }
             }
@@ -732,10 +723,10 @@ class MainActivity : Activity() {
         for (d in empty) {
             val row = listRow()
             row.setOnClickListener { openViewer(d.id) }
-            row.addView(PhoneIcon(this, d.landscape, Ui.MUTED), LinearLayout.LayoutParams(dp(42), dp(42)))
+            row.addView(PhoneIcon(this, d.landscape, Ui.MUTED), LinearLayout.LayoutParams(dp(48), dp(48)))
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
-            col.addView(Ui.text(this, "Empty display", 14.5f, Ui.TEXT, bold = true))
+            col.addView(Ui.text(this, "Empty display", 16f, Ui.TEXT, bold = true))
             detailLines(d, col)
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
             cp.leftMargin = dp(14)

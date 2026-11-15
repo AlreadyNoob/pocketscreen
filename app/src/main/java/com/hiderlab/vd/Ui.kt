@@ -85,19 +85,19 @@ object Ui {
     private fun setPalette(night: Boolean, dynamic: Boolean, ctx: Context?) {
         DARK = night
         if (night) {
-            BG = Color.parseColor("#0B0D12"); SURFACE = Color.parseColor("#151922"); SURFACE2 = Color.parseColor("#1E2330")
-            OUTLINE = Color.parseColor("#2A3040"); TEXT = Color.parseColor("#ECEFF7"); MUTED = Color.parseColor("#8F98AD")
-            ACCENT = Color.parseColor("#7FB0FF"); ON_ACCENT = Color.parseColor("#071A3D")
-            ACCENT_CONT = Color.parseColor("#1B2C52"); ON_ACCENT_CONT = Color.parseColor("#A9C8FF")
-            OK = Color.parseColor("#5FD6A0"); WARN = Color.parseColor("#F3B562"); BAD = Color.parseColor("#FF7B7B")
-            DANGER_BG = Color.parseColor("#3B1B1F"); DANGER_FG = Color.parseColor("#FFB3B0")
+            BG = Color.parseColor("#0D0D12"); SURFACE = Color.parseColor("#17171F"); SURFACE2 = Color.parseColor("#21212C")
+            OUTLINE = Color.parseColor("#2D2D3B"); TEXT = Color.parseColor("#F3F3F8"); MUTED = Color.parseColor("#9B9BB0")
+            ACCENT = Color.parseColor("#AB9DFF"); ON_ACCENT = Color.parseColor("#1B1244")
+            ACCENT_CONT = Color.parseColor("#2C2657"); ON_ACCENT_CONT = Color.parseColor("#D9D2FF")
+            OK = Color.parseColor("#62E0A8"); WARN = Color.parseColor("#F5B866"); BAD = Color.parseColor("#FF8085")
+            DANGER_BG = Color.parseColor("#3C1B24"); DANGER_FG = Color.parseColor("#FFB4B9")
         } else {
-            BG = Color.parseColor("#F3F5FA"); SURFACE = Color.parseColor("#FFFFFF"); SURFACE2 = Color.parseColor("#E8ECF5")
-            OUTLINE = Color.parseColor("#D9DFEC"); TEXT = Color.parseColor("#141824"); MUTED = Color.parseColor("#5B6378")
-            ACCENT = Color.parseColor("#2F62E8"); ON_ACCENT = Color.parseColor("#FFFFFF")
-            ACCENT_CONT = Color.parseColor("#DDE6FF"); ON_ACCENT_CONT = Color.parseColor("#14307A")
-            OK = Color.parseColor("#12805A"); WARN = Color.parseColor("#A86A00"); BAD = Color.parseColor("#C93A3A")
-            DANGER_BG = Color.parseColor("#FCE4E2"); DANGER_FG = Color.parseColor("#B3261E")
+            BG = Color.parseColor("#F5F4FA"); SURFACE = Color.parseColor("#FFFFFF"); SURFACE2 = Color.parseColor("#EDECF5")
+            OUTLINE = Color.parseColor("#DEDCEB"); TEXT = Color.parseColor("#16151F"); MUTED = Color.parseColor("#625F79")
+            ACCENT = Color.parseColor("#5B47E0"); ON_ACCENT = Color.parseColor("#FFFFFF")
+            ACCENT_CONT = Color.parseColor("#E5E0FF"); ON_ACCENT_CONT = Color.parseColor("#2B1F8A")
+            OK = Color.parseColor("#0F8A5F"); WARN = Color.parseColor("#A66A00"); BAD = Color.parseColor("#C93A44")
+            DANGER_BG = Color.parseColor("#FDE3E6"); DANGER_FG = Color.parseColor("#B3261E")
         }
         if (dynamic && ctx != null && Build.VERSION.SDK_INT >= 31) {
             fun c(id: Int): Int = sysColor(ctx, id)
@@ -187,9 +187,9 @@ object Ui {
     }
 
     /** Hairline used on cards and groups so surfaces read as crisp layers on dark backgrounds. */
-    fun hair(): Int = (OUTLINE and 0x00FFFFFF) or 0xB0000000.toInt()
+    fun hair(): Int = Color.TRANSPARENT // surfaces are separated by tone, not outlines
 
-    fun surface(ctx: Context, radius: Int = 20, clickable: Boolean = false): Drawable {
+    fun surface(ctx: Context, radius: Int = 24, clickable: Boolean = false): Drawable {
         val r = dpf(ctx, radius.toFloat())
         val base = shape(SURFACE, r, hair(), dp(ctx, 1))
         return if (clickable) withRipple(base, r) else base
@@ -201,8 +201,8 @@ object Ui {
      */
     fun group(parent: LinearLayout, rows: List<View>, top: Int = 0) {
         val ctx = parent.context
-        val big = dpf(ctx, 16f)
-        val small = dpf(ctx, 5f)
+        val big = dpf(ctx, 22f)
+        val small = dpf(ctx, 6f)
         for ((i, v) in rows.withIndex()) {
             val t = if (i == 0) big else small
             val b = if (i == rows.size - 1) big else small
@@ -247,7 +247,7 @@ object Ui {
 
     /** Heading for a main-screen section: 15sp bold, normal text color. */
     fun sectionTitle(ctx: Context, title: String): TextView {
-        val t = text(ctx, title, 15f, TEXT, bold = true)
+        val t = text(ctx, title, 17f, TEXT, bold = true)
         t.setPadding(dp(ctx, 2), 0, dp(ctx, 2), 0)
         return t
     }
@@ -295,7 +295,7 @@ object Ui {
         e.setHintTextColor(MUTED)
         e.textSize = 16f
         e.setPadding(dp(ctx, 18), dp(ctx, 14), dp(ctx, 18), dp(ctx, 14))
-        val r = dpf(ctx, 13f)
+        val r = dpf(ctx, 16f)
         val sl = StateListDrawable()
         sl.addState(intArrayOf(android.R.attr.state_focused), shape(SURFACE2, r, ACCENT, dp(ctx, 2)))
         sl.addState(intArrayOf(), shape(SURFACE2, r, hair(), dp(ctx, 1)))
@@ -325,12 +325,11 @@ object Ui {
         t.letterSpacing = 0.01f
         t.typeface = face(700)
         t.gravity = Gravity.CENTER
-        t.minHeight = dp(ctx, 52)
+        t.minHeight = dp(ctx, 54)
         t.setPadding(dp(ctx, 22), 0, dp(ctx, 22), 0)
-        val outlined = kind == Kind.TONAL
         t.background = withRipple(
-            if (outlined) shape(bg, dpf(ctx, 18f), hair(), dp(ctx, 1)) else shape(bg, dpf(ctx, 18f)),
-            dpf(ctx, 18f)
+            shape(bg, dpf(ctx, 27f)),
+            dpf(ctx, 27f)
         )
         t.isClickable = true
         t.isFocusable = true
@@ -351,7 +350,7 @@ object Ui {
             Kind.DANGER -> DANGER_BG
             else -> Color.TRANSPARENT
         }
-        val r = dpf(ctx, 14f)
+        val r = dpf(ctx, 21f)
         t.background = withRipple(shape(bg, r), r)
         return t
     }
@@ -405,9 +404,9 @@ object Ui {
     }
 
     /** Puts [rows] into [parent] as separate rounded cards with a gap between them. */
-    fun cards(parent: LinearLayout, rows: List<View>, top: Int = 0, gap: Int = 9) {
+    fun cards(parent: LinearLayout, rows: List<View>, top: Int = 0, gap: Int = 10) {
         val ctx = parent.context
-        val r = dpf(ctx, 20f)
+        val r = dpf(ctx, 24f)
         for ((i, v) in rows.withIndex()) {
             val edge = if (v.tag == "crash") (BAD and 0x00FFFFFF) or 0x73000000 else hair()
             val base = shape(SURFACE, r, edge, dp(ctx, 1))
@@ -421,13 +420,14 @@ object Ui {
         }
     }
 
-    /** The launch button: a full-width bar docked at the bottom of the screen. */
+    /** The launch button: a floating pill at the bottom centre of the screen. */
     fun fab(ctx: Context, label: String, onClick: () -> Unit): LinearLayout {
         val f = LinearLayout(ctx)
         f.orientation = LinearLayout.HORIZONTAL
         f.gravity = Gravity.CENTER
-        f.minimumHeight = dp(ctx, 52)
-        val r = dpf(ctx, 18f)
+        f.minimumHeight = dp(ctx, 58)
+        f.setPadding(dp(ctx, 26), 0, dp(ctx, 30), 0)
+        val r = dpf(ctx, 29f)
         f.background = withRipple(shape(ACCENT, r), r)
         f.isClickable = true
         f.isFocusable = true
@@ -441,16 +441,72 @@ object Ui {
                 outline.setRoundRect(0, 0, view.width, view.height, r)
             }
         }
-        val ic = IconView(ctx, IconView.PLUS, 19, false)
+        val ic = IconView(ctx, IconView.PLUS, 20, false)
         ic.tint = ON_ACCENT
-        f.addView(ic, LinearLayout.LayoutParams(dp(ctx, 19), dp(ctx, 19)))
-        val t = text(ctx, label, 15f, ON_ACCENT, bold = true)
+        f.addView(ic, LinearLayout.LayoutParams(dp(ctx, 20), dp(ctx, 20)))
+        val t = text(ctx, label, 16f, ON_ACCENT, bold = true)
         val tl = LinearLayout.LayoutParams(-2, -2)
         tl.leftMargin = dp(ctx, 8)
         f.addView(t, tl)
         f.setOnClickListener { onClick() }
         pressable(f)
         return f
+    }
+
+    /** Round ripple for borderless icon buttons. */
+    fun circleRipple(): Drawable {
+        val mask = GradientDrawable()
+        mask.shape = GradientDrawable.OVAL
+        mask.setColor(Color.WHITE)
+        return RippleDrawable(ColorStateList.valueOf(rippleColor()), null, mask)
+    }
+
+    /** One rounded card holding [rows], separated by thin inset dividers. */
+    fun list(parent: LinearLayout, rows: List<View>, top: Int = 0, inset: Int = 78) {
+        val ctx = parent.context
+        val box = LinearLayout(ctx)
+        box.orientation = LinearLayout.VERTICAL
+        box.background = shape(SURFACE, dpf(ctx, 26f))
+        box.clipToOutline = true
+        for ((i, v) in rows.withIndex()) {
+            if (v.isClickable) v.background = withRipple(null, 0f)
+            box.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            if (i < rows.size - 1) {
+                val d = View(ctx)
+                d.setBackgroundColor(OUTLINE)
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 1))
+                lp.leftMargin = dp(ctx, inset)
+                lp.rightMargin = dp(ctx, 16)
+                box.addView(d, lp)
+            }
+        }
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.topMargin = dp(ctx, top)
+        parent.addView(box, lp)
+    }
+
+    /** The one status card at the top of the main screen: a glowing dot, a headline and a detail line. */
+    fun statusBar(ctx: Context, color: Int, title: String, detail: String): LinearLayout {
+        val c = LinearLayout(ctx)
+        c.orientation = LinearLayout.HORIZONTAL
+        c.gravity = Gravity.CENTER_VERTICAL
+        c.setPadding(dp(ctx, 18), dp(ctx, 15), dp(ctx, 18), dp(ctx, 15))
+        c.background = shape(SURFACE, dpf(ctx, 24f))
+        val halo = android.widget.FrameLayout(ctx)
+        val hb = GradientDrawable()
+        hb.shape = GradientDrawable.OVAL
+        hb.setColor((color and 0x00FFFFFF) or 0x33000000)
+        halo.background = hb
+        halo.addView(dot(ctx, color, 10), android.widget.FrameLayout.LayoutParams(dp(ctx, 10), dp(ctx, 10), Gravity.CENTER))
+        val hl = LinearLayout.LayoutParams(dp(ctx, 26), dp(ctx, 26))
+        hl.rightMargin = dp(ctx, 14)
+        c.addView(halo, hl)
+        val col = LinearLayout(ctx)
+        col.orientation = LinearLayout.VERTICAL
+        col.addView(text(ctx, title, 16f, TEXT, bold = true))
+        col.addView(text(ctx, detail, 12.5f, MUTED))
+        c.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        return c
     }
 
     /** Fades and lifts [views] in one after another. Used once when a screen first appears. */
@@ -499,7 +555,7 @@ object Ui {
         val box = LinearLayout(a)
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(dp(a, 6), dp(a, 6), dp(a, 6), dp(a, 6))
-        box.background = shape(SURFACE, dpf(a, 18f), hair(), dp(a, 1))
+        box.background = shape(SURFACE2, dpf(a, 22f))
         box.clipToOutline = true
         box.elevation = dpf(a, 12f)
         val pw = PopupWindow(box, dp(a, 248), ViewGroup.LayoutParams.WRAP_CONTENT, true)
@@ -535,7 +591,7 @@ object Ui {
     fun sheet(a: Activity, heightFrac: Float = 0f, build: (LinearLayout, Dialog) -> Unit): Dialog {
         val d = Dialog(a)
         d.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val r = dpf(a, 24f)
+        val r = dpf(a, 28f)
         val body = LinearLayout(a)
         body.orientation = LinearLayout.VERTICAL
         val g = GradientDrawable()
@@ -780,21 +836,22 @@ class SwitchView(ctx: Context) : View(ctx) {
     }
 
     override fun onMeasure(wSpec: Int, hSpec: Int) {
-        setMeasuredDimension(Ui.dp(context, 46), Ui.dp(context, 27))
+        setMeasuredDimension(Ui.dp(context, 52), Ui.dp(context, 32))
     }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        val tr = Ui.dpf(context, 10f)
         p.style = Paint.Style.FILL
         p.color = argb.evaluate(progress, Ui.OUTLINE, Ui.ACCENT) as Int
-        c.drawRoundRect(RectF(0f, 0f, w, h), tr, tr, p)
-        val t = Ui.dpf(context, 19f)
-        val pad = (h - t) / 2f
-        val x = pad + (w - t - 2f * pad) * progress
+        c.drawRoundRect(RectF(0f, 0f, w, h), h / 2f, h / 2f, p)
+        val rOff = Ui.dpf(context, 8f)
+        val rOn = Ui.dpf(context, 12f)
+        val r = rOff + (rOn - rOff) * progress
+        val pad = h / 2f
+        val cx = pad + (w - 2f * pad) * progress
         p.color = argb.evaluate(progress, Ui.MUTED, Ui.ON_ACCENT) as Int
-        c.drawRoundRect(RectF(x, pad, x + t, pad + t), Ui.dpf(context, 7f), Ui.dpf(context, 7f), p)
+        c.drawCircle(cx, h / 2f, r, p)
     }
 }
 
@@ -813,7 +870,7 @@ class LogoView(ctx: Context, private val sizeDp: Int = 44) : View(ctx) {
         val h = height.toFloat()
         p.style = Paint.Style.FILL
         p.color = Ui.ACCENT_CONT
-        c.drawRoundRect(RectF(0f, 0f, w, h), w * 0.325f, w * 0.325f, p)
+        c.drawRoundRect(RectF(0f, 0f, w, h), w * 0.36f, w * 0.36f, p)
         val cx = w / 2f
         val cy = h / 2f
         val pw = w * 0.26f
