@@ -36,6 +36,23 @@ object Vd {
     val listeners = CopyOnWriteArrayList<Runnable>()
     @Volatile var logSink: ((String) -> Unit)? = null
 
+    /**
+     * For the on-display keyboard: what Android says about the keyboard a few seconds after an app
+     * starts on the display, and again later (the viewer is usually open by then). Read-only, debug log only.
+     */
+    private fun logKeyboardState(display: Int) {
+        Thread {
+            for (wait in longArrayOf(3500L, 5000L)) {
+                try { Thread.sleep(wait) } catch (_: InterruptedException) { return@Thread }
+                log("keyboard state for display #$display:\n" + exec(
+                    "echo '-- input_method'; dumpsys input_method | grep -E 'mCurFocusedWindow|mCurId|mCurTokenDisplayId|mInputShown|mShowRequested|mImeWindowVis|mCurClient|mCurVirtualDisplayToken' | cut -c1-220; " +
+                    "echo '-- window ime'; dumpsys window | grep -E 'mInputMethodTarget|mImeLayeringTarget|mImeControlTarget|mInputMethodWindow|InputMethod' | cut -c1-220; " +
+                    "echo '-- window displays'; dumpsys window displays | grep -iE 'ime|Display: mDisplayId=$display|systemDecor|shouldShow' | cut -c1-220; " +
+                    "echo '-- display'; dumpsys display | grep -iE 'hiderlab' | cut -c1-400"))
+            }
+        }.start()
+    }
+
     fun log(s: String) { Debug.write(s); logSink?.invoke(s) }
     fun changed() { listeners.forEach { try { it.run() } catch (_: Throwable) {} } }
 
@@ -498,7 +515,9 @@ object Vd {
         // (still listed in Recents from an earlier run), the flag is ignored and the entry stays.
         // CLEAR_TASK resets that task so the flag takes effect on it too.
         val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 or 0x00008000 else LAUNCH_FLAGS // EXCLUDE_FROM_RECENTS | CLEAR_TASK
-        return exec("am start --display $display -f $flags -n $comp")
+        val started = exec("am start --display $display -f $flags -n $comp")
+        if (hasDisplayKeyboard(display) && Debug.enabled(ctx)) logKeyboardState(display)
+        return started
     }
 
     /**
