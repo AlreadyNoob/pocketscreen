@@ -223,8 +223,15 @@ object Ui {
 
     /** Small accent-colored heading above a group. */
     fun sectionLabel(ctx: Context, title: String): TextView {
-        val t = text(ctx, title, 13f, MUTED, bold = true)
+        val t = text(ctx, title, 12.5f, MUTED, bold = true)
         t.setPadding(dp(ctx, 6), 0, dp(ctx, 6), 0)
+        return t
+    }
+
+    /** Heading for a main-screen section: 15sp bold, normal text color. */
+    fun sectionTitle(ctx: Context, title: String): TextView {
+        val t = text(ctx, title, 15f, TEXT, bold = true)
+        t.setPadding(dp(ctx, 2), 0, dp(ctx, 2), 0)
         return t
     }
 
@@ -254,7 +261,7 @@ object Ui {
         t.text = s
         t.textSize = sp
         t.setTextColor(color)
-        if (bold) t.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        if (bold) t.typeface = Typeface.create("sans-serif-medium", if (sp >= 20f) Typeface.BOLD else Typeface.NORMAL)
         if (sp >= 20f) t.letterSpacing = -0.015f // large titles sit tighter
         return t
     }
@@ -348,7 +355,7 @@ object Ui {
         val lp = LinearLayout.LayoutParams(dp(ctx, 7), dp(ctx, 7))
         lp.rightMargin = dp(ctx, 6)
         r.addView(dot(ctx, color, 7), lp)
-        val v = text(ctx, value, 13f, TEXT, bold = true)
+        val v = text(ctx, value, 12.5f, TEXT, bold = true)
         v.isSingleLine = true
         r.addView(v)
         add(c, r, top = 3)

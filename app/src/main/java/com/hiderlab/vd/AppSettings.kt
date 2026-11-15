@@ -38,8 +38,8 @@ object AppSettings {
     fun hideFromRecents(c: Context): Boolean = p(c).getBoolean("hide_recents", true)
     fun setHideFromRecents(c: Context, on: Boolean) { p(c).edit().putBoolean("hide_recents", on).apply() }
 
-    /** On Android 12+, use the system (wallpaper) colors. On by default. */
-    fun dynamicColor(c: Context): Boolean = p(c).getBoolean("dynamic_color", true)
+    /** On Android 12+, use the system (wallpaper) colors. Off by default. */
+    fun dynamicColor(c: Context): Boolean = p(c).getBoolean("dynamic_color", false)
     fun setDynamicColor(c: Context, on: Boolean) { p(c).edit().putBoolean("dynamic_color", on).apply() }
 
     /** Stop everything when the battery is at or below this percent and not charging. 0 = off. */
