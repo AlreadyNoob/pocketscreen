@@ -98,6 +98,7 @@ class HostService : Service() {
 
     /** Freezes / resumes the apps that have "Freeze when the screen is off", then re-plans the checks. */
     private fun onScreenChanged(off: Boolean) {
+        Debug.write("screen ${if (off) "off" else "on"} (host service running)")
         val pm = getSystemService(PowerManager::class.java)
         val wl = wakeLock ?: pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketScreen:check").also { wakeLock = it }
         try { wl.acquire(20_000L) } catch (_: Throwable) {}
@@ -417,6 +418,7 @@ class HostService : Service() {
             batteryRegistered = true
         }
         startWatchdog()
+        Debug.write("host service started")
         val ctx2 = applicationContext
         Thread { try { Freezer.onScreenOn(ctx2) } catch (_: Throwable) {} }.start() // leftovers from a crash
         Thread { refreshNotification() }.start()

@@ -47,10 +47,15 @@ object Freezer {
     /** Called when the screen goes off: pauses every app that has the option on. */
     @Synchronized
     fun onScreenOff(c: Context, apps: List<String>) {
+        Debug.write("freeze: screen off, running apps = $apps, with the option on = ${apps.filter { AppSettings.freezeWhenOff(c, it) }}")
         val byDisplay = apps.groupBy { Vd.displayOf(it) }
         for ((display, pkgs) in byDisplay) {
             val want = pkgs.filter { AppSettings.freezeWhenOff(c, it) }
-            if (display == null || want.isEmpty()) continue
+            if (want.isEmpty()) continue
+            if (display == null) {
+                want.forEach { setStatus(c, it, "not paused: its display was not found") }
+                continue
+            }
             if (want.size != pkgs.size) {
                 want.forEach { setStatus(c, it, "not paused: another app shares its display") }
                 continue
