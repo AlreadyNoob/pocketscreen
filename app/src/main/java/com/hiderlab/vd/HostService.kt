@@ -90,15 +90,41 @@ class HostService : Service() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
                 alarmAction -> runPassWithWakeLock()
-                I2.ACTION_SCREEN_OFF -> onScreenChanged(off = true)
-                I2.ACTION_SCREEN_ON -> onScreenChanged(off = false)
+                I2.ACTION_SCREEN_OFF -> screenState(off = true, "broadcast")
+                I2.ACTION_SCREEN_ON -> screenState(off = false, "broadcast")
             }
         }
     }
 
+    /** The last screen state acted on, so the three ways of noticing a change (see [screenState]) act once. */
+    @Volatile private var screenIsOff = false
+
+    /**
+     * Called with the screen state from every source we have: the screen on/off broadcasts, the main
+     * display's state changing, and each check pass. On some phones the broadcasts never arrive, so
+     * none of them is trusted alone. Acts only when the state actually changed.
+     */
+    @Synchronized
+    private fun screenState(off: Boolean, source: String) {
+        if (off == screenIsOff) return
+        screenIsOff = off
+        Debug.write("screen ${if (off) "off" else "on"} (seen by $source)")
+        onScreenChanged(off)
+    }
+
+    private val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(id: Int) {}
+        override fun onDisplayRemoved(id: Int) {}
+        override fun onDisplayChanged(id: Int) {
+            if (id != android.view.Display.DEFAULT_DISPLAY) return
+            val pm = getSystemService(PowerManager::class.java)
+            screenState(!pm.isInteractive, "display state")
+        }
+    }
+    private var displayListening = false
+
     /** Freezes / resumes the apps that have "Freeze when the screen is off", then re-plans the checks. */
     private fun onScreenChanged(off: Boolean) {
-        Debug.write("screen ${if (off) "off" else "on"} (host service running)")
         val pm = getSystemService(PowerManager::class.java)
         val wl = wakeLock ?: pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketScreen:check").also { wakeLock = it }
         try { wl.acquire(20_000L) } catch (_: Throwable) {}
@@ -123,11 +149,20 @@ class HostService : Service() {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(alarmReceiver, f, Context.RECEIVER_NOT_EXPORTED)
         else registerReceiver(alarmReceiver, f)
         alarmRegistered = true
+        try {
+            getSystemService(android.hardware.display.DisplayManager::class.java)
+                .registerDisplayListener(displayListener, android.os.Handler(android.os.Looper.getMainLooper()))
+            displayListening = true
+        } catch (t: Throwable) { Debug.write("display listener: $t") }
         scheduleNext()
     }
 
     private fun stopAlarm() {
         try { getSystemService(android.app.AlarmManager::class.java).cancel(alarmIntent()) } catch (_: Throwable) {}
+        if (displayListening) {
+            try { getSystemService(android.hardware.display.DisplayManager::class.java).unregisterDisplayListener(displayListener) } catch (_: Throwable) {}
+            displayListening = false
+        }
         if (alarmRegistered) { try { unregisterReceiver(alarmReceiver) } catch (_: Throwable) {}; alarmRegistered = false }
         try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
     }
@@ -148,6 +183,7 @@ class HostService : Service() {
             try {
                 lastPass = System.currentTimeMillis()
                 Debug.write("check run (screen ${if (pm.isInteractive) "on" else "off"})")
+                screenState(!pm.isInteractive, "check pass")
                 checkLimits(ctx, fresh = true)
             } finally {
                 try { if (wl.isHeld) wl.release() } catch (_: Throwable) {}
