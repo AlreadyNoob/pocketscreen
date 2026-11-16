@@ -1418,6 +1418,17 @@ class MainActivity : Activity() {
                 settingsLimit("Stop at time", Limit.CLOCK, AppSettings.appAt(this, pkg), AppSettings.autoStopAt(this)) { AppSettings.setAppAt(this, pkg, it); Vd.refreshDeadlines(applicationContext); refreshTasks() }
             ))
 
+            val freezeNote = Freezer.lastFailure(this)
+            section("Power", listOf(
+                settingsToggle("Freeze when the screen is off",
+                    if (freezeNote.isEmpty()) "Pauses the app while the screen is off and resumes it when the screen comes back on. Needs Shizuku with root."
+                    else "Did not work on this phone: Shizuku isn't allowed to pause other apps ($freezeNote).",
+                    AppSettings.freezeWhenOff(this, pkg)) {
+                    AppSettings.setFreezeWhenOff(this, pkg, it)
+                    if (!it) { val c = applicationContext; Thread { Freezer.forget(c, pkg) }.start() }
+                }
+            ))
+
             section("Viewer", listOf(
                 settingsTri("Suppress keyboard requests", "Keyboard only opens from the keyboard icon.",
                     AppSettings.appSuppressKeyboard(this, pkg), AppSettings.suppressKeyboard(this)) { AppSettings.setAppSuppressKeyboard(this, pkg, it) },

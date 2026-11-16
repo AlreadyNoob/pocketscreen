@@ -151,6 +151,7 @@ object Vd {
     /** Force-stops an app and returns its sound to normal. */
     fun stopApp(ctx: Context, pkg: String): String {
         val r = exec("am force-stop $pkg")
+        try { Freezer.forget(ctx, pkg) } catch (_: Throwable) {} // drop its "frozen" record
         restoreAudio(ctx, pkg)
         clearSession(ctx, pkg)
         return r

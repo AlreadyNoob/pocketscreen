@@ -6,16 +6,6 @@ import android.content.Context
 object AppSettings {
     private fun p(c: Context) = c.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    /**
-     * Beta. New displays get their own keyboard: an app that focuses a text box raises it inside the
-     * display and resizes for it, and you type by tapping it in the viewer. Off = the phone's keyboard.
-     */
-
-    /**
-     * Beta. While the phone's keyboard is open in the viewer, the display is made shorter by the
-     * keyboard's height, so the app resizes and its bottom (key rows, input line) stays visible.
-     */
-
     /** When on, the keyboard only appears from the keyboard icon in the viewer. Off by default. */
     fun suppressKeyboard(c: Context): Boolean = p(c).getBoolean("suppress_kb", false)
     fun setSuppressKeyboard(c: Context, on: Boolean) { p(c).edit().putBoolean("suppress_kb", on).apply() }
@@ -37,8 +27,6 @@ object AppSettings {
     /** Launch apps with "exclude from Recents" so they don't show there while on a hidden display. On by default. */
     fun hideFromRecents(c: Context): Boolean = p(c).getBoolean("hide_recents", true)
     fun setHideFromRecents(c: Context, on: Boolean) { p(c).edit().putBoolean("hide_recents", on).apply() }
-
-    /** On Android 12+, use the system (wallpaper) colors. On by default. */
 
     /** Stop everything when the battery is at or below this percent and not charging. 0 = off. */
     fun autoStopBattery(c: Context): Int = p(c).getInt("auto_battery", 0)
@@ -88,4 +76,8 @@ object AppSettings {
     fun setAppRefreshRate(c: Context, pkg: String, v: Int) { p(c).edit().putInt("hz_$pkg", v).apply() }
     fun effectiveRefreshRate(c: Context, pkg: String): Int =
         appRefreshRate(c, pkg).let { if (it < 0) refreshRate(c) else it }.coerceIn(0, MAX_HZ)
+
+    /** Per app: pause the app while the screen is off and resume it when the screen comes on. Off by default. */
+    fun freezeWhenOff(c: Context, pkg: String): Boolean = p(c).getBoolean("freeze_off_$pkg", false)
+    fun setFreezeWhenOff(c: Context, pkg: String, on: Boolean) { p(c).edit().putBoolean("freeze_off_$pkg", on).apply() }
 }

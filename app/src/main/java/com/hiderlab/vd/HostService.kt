@@ -68,6 +68,8 @@ class HostService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        val ctx = applicationContext
+        Thread { try { Freezer.onScreenOn(ctx) } catch (_: Throwable) {} }.start() // never leave an app paused
         watching = false
         stopAlarm()
         Vd.listeners.remove(changeListener)
@@ -88,9 +90,27 @@ class HostService : Service() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
                 alarmAction -> runPassWithWakeLock()
-                I2.ACTION_SCREEN_ON, I2.ACTION_SCREEN_OFF -> Thread { scheduleNext() }.start()
+                I2.ACTION_SCREEN_OFF -> onScreenChanged(off = true)
+                I2.ACTION_SCREEN_ON -> onScreenChanged(off = false)
             }
         }
+    }
+
+    /** Freezes / resumes the apps that have "Freeze when the screen is off", then re-plans the checks. */
+    private fun onScreenChanged(off: Boolean) {
+        val pm = getSystemService(PowerManager::class.java)
+        val wl = wakeLock ?: pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PocketScreen:check").also { wakeLock = it }
+        try { wl.acquire(20_000L) } catch (_: Throwable) {}
+        val ctx = applicationContext
+        Thread {
+            try {
+                if (off) Freezer.onScreenOff(ctx, scanApps()) else Freezer.onScreenOn(ctx)
+            } catch (t: Throwable) { Debug.write("freeze/resume error: $t") }
+            finally {
+                try { if (wl.isHeld) wl.release() } catch (_: Throwable) {}
+                scheduleNext()
+            }
+        }.start()
     }
 
     private fun startWatchdog() {
@@ -397,6 +417,8 @@ class HostService : Service() {
             batteryRegistered = true
         }
         startWatchdog()
+        val ctx2 = applicationContext
+        Thread { try { Freezer.onScreenOn(ctx2) } catch (_: Throwable) {} }.start() // leftovers from a crash
         Thread { refreshNotification() }.start()
         return START_NOT_STICKY
     }
