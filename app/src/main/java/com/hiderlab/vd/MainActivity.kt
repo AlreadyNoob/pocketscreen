@@ -1418,11 +1418,11 @@ class MainActivity : Activity() {
                 settingsLimit("Stop at time", Limit.CLOCK, AppSettings.appAt(this, pkg), AppSettings.autoStopAt(this)) { AppSettings.setAppAt(this, pkg, it); Vd.refreshDeadlines(applicationContext); refreshTasks() }
             ))
 
-            val freezeNote = Freezer.lastFailure(this)
+            val freezeNote = Freezer.status(this, pkg)
             section("Power", listOf(
-                settingsToggle("Freeze when the screen is off",
-                    if (freezeNote.isEmpty()) "Pauses the app while the screen is off and resumes it when the screen comes back on. Needs Shizuku with root."
-                    else "Did not work on this phone: Shizuku isn't allowed to pause other apps ($freezeNote).",
+                settingsToggle("Pause when the screen is off",
+                    "Stops the app like switching away from it while the screen is off, and brings it back when the screen is on." +
+                        if (freezeNote.isEmpty()) "" else "\nLast time: $freezeNote",
                     AppSettings.freezeWhenOff(this, pkg)) {
                     AppSettings.setFreezeWhenOff(this, pkg, it)
                     if (!it) { val c = applicationContext; Thread { Freezer.forget(c, pkg) }.start() }
