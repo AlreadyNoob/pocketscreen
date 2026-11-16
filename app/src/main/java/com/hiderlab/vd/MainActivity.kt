@@ -617,6 +617,7 @@ class MainActivity : Activity() {
             }
             Vd.sessionText(this, r.pkg)?.let { addPill("Running $it", Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT) }
             Vd.remainingText(this, r.pkg)?.let { addPill(it, Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT) }
+            if (AppSettings.freezeWhenOff(this, r.pkg)) addPill("Pauses when screen is off", Ui.ON_ACCENT_CONT, Ui.ACCENT_CONT)
             stats[r.pkg]?.memMb?.let { addPill("$it MB RAM", Ui.MUTED, Ui.SURFACE2) }
             stats[r.pkg]?.cpu?.let { addPill("${if (it < 10) String.format("%.1f", it) else it.toInt().toString()}% CPU", Ui.MUTED, Ui.SURFACE2) }
             val cp = LinearLayout.LayoutParams(0, -2, 1f)
