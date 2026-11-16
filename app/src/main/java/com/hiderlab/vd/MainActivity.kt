@@ -1490,16 +1490,6 @@ class MainActivity : Activity() {
                     Updater.setAutoEnabled(this, it)
                 }
             ))
-            if (Build.VERSION.SDK_INT >= 31) {
-                section("Appearance", listOf(
-                    settingsToggle("Use system colors", "Follow your wallpaper colors. Light and dark follow the system.", AppSettings.dynamicColor(this)) {
-                        AppSettings.setDynamicColor(this, it)
-                        dlg.dismiss()
-                        recreate()
-                    }
-                ))
-            }
-
             // Debug log: file only, off by default, never shown on screen.
             val dbgBox = LinearLayout(this)
             dbgBox.orientation = LinearLayout.VERTICAL

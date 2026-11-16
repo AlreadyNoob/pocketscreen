@@ -55,34 +55,25 @@ object Ui {
     private var DANGER_FG = 0
     private var themeKey = ""
 
-    init { setPalette(true, false, null) }
+    init { setPalette(true) }
 
     enum class Kind { FILLED, TONAL, TEXT, DANGER, DANGER_TEXT }
 
     private fun isNight(ctx: Context): Boolean =
         (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
-    private fun sysColor(ctx: Context, id: Int): Int = ctx.getColor(id)
-
-    /** Picks light/dark from the system and, on Android 12+, wallpaper colors when [dynamic] is on. */
+    /** Picks the light or dark palette from the system setting. */
     fun applyTheme(ctx: Context) {
-        val night = isNight(ctx)
-        val dyn = Build.VERSION.SDK_INT >= 31 && AppSettings.dynamicColor(ctx)
-        try { setPalette(night, dyn, if (dyn) ctx else null) }
-        catch (_: Throwable) { setPalette(night, false, null) } // system colors missing on this device
+        setPalette(isNight(ctx))
         themeKey = key(ctx)
     }
 
-    private fun key(ctx: Context): String {
-        val dyn = Build.VERSION.SDK_INT >= 31 && AppSettings.dynamicColor(ctx)
-        val acc = if (dyn) try { sysColor(ctx, android.R.color.system_accent1_600) } catch (_: Throwable) { 0 } else 0
-        return "${isNight(ctx)}|$dyn|$acc"
-    }
+    private fun key(ctx: Context): String = "${isNight(ctx)}"
 
-    /** True when the system theme or wallpaper colors changed since [applyTheme]. */
+    /** True when the system light/dark setting changed since [applyTheme]. */
     fun themeChanged(ctx: Context): Boolean = key(ctx) != themeKey
 
-    private fun setPalette(night: Boolean, dynamic: Boolean, ctx: Context?) {
+    private fun setPalette(night: Boolean) {
         DARK = night
         if (night) {
             BG = Color.parseColor("#0A0C0F"); SURFACE = Color.parseColor("#12161B"); SURFACE2 = Color.parseColor("#1B2128")
@@ -98,20 +89,6 @@ object Ui {
             ACCENT_CONT = Color.parseColor("#D3F2EA"); ON_ACCENT_CONT = Color.parseColor("#04382F")
             OK = Color.parseColor("#15803D"); WARN = Color.parseColor("#B45309"); BAD = Color.parseColor("#C62828")
             DANGER_BG = Color.parseColor("#FCE4E2"); DANGER_FG = Color.parseColor("#B3261E")
-        }
-        if (dynamic && ctx != null && Build.VERSION.SDK_INT >= 31) {
-            fun c(id: Int): Int = sysColor(ctx, id)
-            if (night) {
-                ACCENT = c(android.R.color.system_accent1_200); ON_ACCENT = c(android.R.color.system_accent1_800)
-                ACCENT_CONT = c(android.R.color.system_accent1_700); ON_ACCENT_CONT = c(android.R.color.system_accent1_100)
-                BG = c(android.R.color.system_neutral1_900); SURFACE = c(android.R.color.system_neutral1_800); SURFACE2 = c(android.R.color.system_neutral2_700)
-                OUTLINE = c(android.R.color.system_neutral2_600); TEXT = c(android.R.color.system_neutral1_100); MUTED = c(android.R.color.system_neutral2_300)
-            } else {
-                ACCENT = c(android.R.color.system_accent1_600); ON_ACCENT = c(android.R.color.system_accent1_0)
-                ACCENT_CONT = c(android.R.color.system_accent1_100); ON_ACCENT_CONT = c(android.R.color.system_accent1_900)
-                BG = c(android.R.color.system_neutral1_50); SURFACE = c(android.R.color.system_neutral1_0); SURFACE2 = c(android.R.color.system_neutral2_100)
-                OUTLINE = c(android.R.color.system_neutral2_200); TEXT = c(android.R.color.system_neutral1_900); MUTED = c(android.R.color.system_neutral2_600)
-            }
         }
     }
 

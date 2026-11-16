@@ -37,7 +37,7 @@ PocketScreen was built for phones like the Tecno CAMON 40 Pro, where a system fr
 - **Cleanup:** displays with nothing on them are removed automatically after about 30 seconds.
 - **Viewer options:** the back gesture can control the app or be ignored, and the keyboard can be kept from popping up unless you ask for it.
 - **Updates:** Settings → Updates checks GitHub for a newer release (also automatically, at most twice a day; can be turned off). It opens the release page, nothing installs by itself.
-- **Look:** Material-style light and dark themes that follow the system, plus wallpaper colors on Android 12 and newer.
+- **Look:** Material-style light and dark themes that follow the system.
 - **Debug log:** off by default, writes to a file only, and can be shared from Settings.
 
 ### Recents
