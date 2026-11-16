@@ -28,20 +28,25 @@ object Freezer {
 
     private const val NO_HISTORY_FLAGS = 0x10000000 or 0x00800000 // NEW_TASK | EXCLUDE_FROM_RECENTS
 
-    /** The state Android reports for the app's top activity: RESUMED, PAUSED, STOPPED... or null. */
-    private fun activityState(pkg: String): String? {
-        val out = Vd.exec("dumpsys activity activities")
-        val lines = out.lines()
-        var found: String? = null
-        for ((i, l) in lines.withIndex()) {
-            if (!l.contains("ActivityRecord{") || !l.contains(" $pkg/")) continue
-            for (j in i + 1..minOf(i + 40, lines.size - 1)) {
-                val m = Regex("\\bstate=(\\w+)").find(lines[j]) ?: continue
-                found = m.groupValues[1]; break
+    /**
+     * Asks Android what is in the foreground on the display now: "RESUMED" if the app is still the
+     * resumed one, "PAUSED" if our black screen is, or null when the dump says neither. The lines
+     * it decided from go to the debug log, so a different dump format on another phone can be seen.
+     */
+    private fun activityState(pkg: String, display: Int): String? {
+        val lines = Vd.exec("dumpsys activity activities").lines()
+        val resumed = lines.filter { it.contains("esumedActivity") }
+        val mine = lines.filter { it.contains("ActivityRecord{") && it.contains(" $pkg/") }
+        Debug.write("freeze dump (display $display):\n" + (resumed + mine).distinct().take(14).joinToString("\n") { it.trim().take(180) })
+        val parkResumed = resumed.any { it.contains("ParkActivity") }
+        val appResumed = resumed.any { it.contains(" $pkg/") }
+        return when {
+            appResumed && !parkResumed -> "RESUMED"
+            parkResumed -> "PAUSED"
+            else -> lines.indices.firstOrNull { lines[it].contains("ActivityRecord{") && lines[it].contains(" $pkg/") }?.let { i ->
+                (i + 1..minOf(i + 40, lines.size - 1)).firstNotNullOfOrNull { j -> Regex("\\bstate=(\\w+)").find(lines[j])?.groupValues?.get(1) }
             }
-            if (found != null) break
         }
-        return found
     }
 
     /** Called when the screen goes off: pauses every app that has the option on. */
@@ -67,7 +72,7 @@ object Freezer {
             val started = ParkActivity.isParked()
             val why = r.lineSequence().firstOrNull { it.contains("Exception") || it.contains("Error") }?.trim()?.take(160)
             for (pkg in want) {
-                val st = if (started) activityState(pkg) else null
+                val st = if (started) activityState(pkg, display) else null
                 when {
                     !started -> setStatus(c, pkg, "did not pause: the black screen could not start" + (why?.let { " ($it)" } ?: ""))
                     st == null -> setStatus(c, pkg, "paused, could not confirm")
