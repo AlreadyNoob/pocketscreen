@@ -708,18 +708,16 @@ class LogoView(ctx: Context, private val sizeDp: Int = 44) : View(ctx) {
         p.style = Paint.Style.FILL
         p.color = Ui.ACCENT_CONT
         c.drawRoundRect(RectF(0f, 0f, w, h), w * 0.3f, w * 0.3f, p)
-        val cx = w / 2f
-        val cy = h / 2f
-        val pw = w * 0.26f
-        val ph = h * 0.36f
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = Ui.dpf(context, 2f)
-        p.color = Ui.ACCENT
-        c.drawRoundRect(RectF(cx - pw, cy - ph, cx + pw, cy + ph), pw * 0.4f, pw * 0.4f, p)
+        // the real phone, faded
         p.style = Paint.Style.FILL
         p.color = (Ui.ACCENT and 0x00FFFFFF) or 0x66000000
-        val iw = pw * 0.56f
-        val ih = ph * 0.58f
-        c.drawRoundRect(RectF(cx - iw, cy - ih * 0.7f, cx + iw, cy + ih * 1.1f), iw * 0.3f, iw * 0.3f, p)
+        c.drawRoundRect(RectF(w * 0.30f, h * 0.20f, w * 0.57f, h * 0.66f), w * 0.07f, w * 0.07f, p)
+        // the extra display with a play triangle
+        p.color = Ui.ACCENT
+        c.drawRoundRect(RectF(w * 0.42f, h * 0.44f, w * 0.76f, h * 0.76f), w * 0.07f, w * 0.07f, p)
+        p.color = Ui.ACCENT_CONT
+        c.drawRoundRect(RectF(w * 0.46f, h * 0.49f, w * 0.72f, h * 0.71f), w * 0.03f, w * 0.03f, p)
+        p.color = Ui.ACCENT
+        c.drawCircle(w * 0.59f, h * 0.60f, w * 0.04f, p)
     }
 }
