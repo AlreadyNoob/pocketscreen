@@ -42,7 +42,9 @@
 
         <activity
             android:name=".ParkActivity"
-            android:exported="false"
+            android:exported="true"
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
             android:taskAffinity="com.hiderlab.vd.park"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />

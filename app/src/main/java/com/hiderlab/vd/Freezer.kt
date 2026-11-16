@@ -61,12 +61,15 @@ object Freezer {
                 continue
             }
             val r = Vd.exec("am start --display $display -f $NO_HISTORY_FLAGS -n ${c.packageName}/.ParkActivity")
-            Debug.write("park display $display: ${r.trim().take(200)}")
+            Debug.write("park display $display: ${r.trim().take(900)}")
             // Give Android a moment to stop what is underneath.
             Thread.sleep(1500)
+            val started = ParkActivity.isParked()
+            val why = r.lineSequence().firstOrNull { it.contains("Exception") || it.contains("Error") }?.trim()?.take(160)
             for (pkg in want) {
-                val st = activityState(pkg)
+                val st = if (started) activityState(pkg) else null
                 when {
+                    !started -> setStatus(c, pkg, "did not pause: the black screen could not start" + (why?.let { " ($it)" } ?: ""))
                     st == null -> setStatus(c, pkg, "paused, could not confirm")
                     st.equals("RESUMED", true) -> {
                         setStatus(c, pkg, "did not pause: it stayed in the foreground")
