@@ -5,13 +5,15 @@ import android.os.Build
 
 /**
  * The "clone space": a profile of the phone's main user that holds a second copy of an app, with its
- * own empty data, so the copy can be signed in to another account. Everything here goes through the
+ * own empty data, so the copy can be signed in to another account. PocketScreen never creates a user or
+ * profile: it uses one the phone already has (the phone maker's "Dual apps", say), after the user agrees.
+ * Everything here goes through the
  * shell ([Vd.exec]) because the app can't see other profiles through PackageManager. Calls block, so
  * run them on a background thread.
  *
- * Safety: this only touches the user recorded in the `clones` prefs (key `space`), which is one we
- * created or one the user agreed to use. It never uninstalls without `--user`, and never touches the
- * owner user.
+ * Safety: this only touches the user recorded in the `clones` prefs (key `space`), which is one the user
+ * agreed to use (or, from an earlier build, one it created). It never uninstalls without `--user`, and
+ * never touches the owner user.
  */
 object CloneSpace {
 
@@ -204,11 +206,9 @@ object CloneSpace {
 
     // ---------------------------------------------------------------- the saved record
 
-    const val SPACE_NAME = "PocketScreen clones"
-    private const val CREATED = "created"
     private const val ADOPTED = "adopted"
 
-    /** What we saved about the space: `id|name|method|origin`, origin being `created` or `adopted`. */
+    /** What we saved about the space: `id|name|method|origin`, origin being `adopted`, or `created` for a space an earlier build made. */
     data class Record(val id: Int, val name: String, val method: String, val origin: String) {
         val adopted: Boolean get() = origin == ADOPTED
     }
@@ -263,7 +263,7 @@ object CloneSpace {
     fun status(ctx: Context): Status {
         if (Vd.service == null) return Status(State.NO_SERVICE, -1, "Not connected to Shizuku")
         val users = listUsers() ?: return Status(State.NO_SERVICE, -1, "Couldn't read the phone's users")
-        val rec = record(ctx) ?: return Status(State.NOT_SET_UP, -1, "Not set up yet")
+        val rec = record(ctx) ?: return Status(State.NOT_SET_UP, -1, "No clone profile chosen yet")
         val u = users.firstOrNull { it.id == rec.id && it.name == rec.name }
             ?: return Status(State.MISSING, rec.id, "Clone space is missing")
         return if (u.running) Status(State.READY, u.id, "Ready (user ${u.id}, ${rec.origin})")
@@ -287,8 +287,7 @@ object CloneSpace {
         val userId: Int = -1,
         val message: String = "",
         /** A profile on the phone that we didn't create, which the user could agree to use instead. */
-        val foreign: User? = null,
-        val created: Boolean = false
+        val foreign: User? = null
     )
 
     private fun listed(id: Int, filter: String): Set<String> = parsePackages(Vd.exec("pm list packages --user $id $filter"))
@@ -307,26 +306,14 @@ object CloneSpace {
         return ok
     }
 
-    /** Best-effort: the system pieces apps need to sign in and render, when the owner has them and the space doesn't. */
-    private fun installSystemPieces(id: Int) {
-        val pat = "^package:(com[.]google[.]android[.](gms|gsf|webview)|com[.]android[.](vending|webview)|com[.]google[.]android[.]trichromelibrary[^ ]*)\$"
-        val owner = parsePackages(Vd.exec("pm list packages --user ${AppRef.OWNER} | grep -E '$pat'"))
-        val here = parsePackages(Vd.exec("pm list packages --user $id | grep -E '$pat'"))
-        for (p in owner - here) sh("pm install-existing --user $id $p")
-    }
-
-    private fun removeUser(id: Int) {
-        if (id == AppRef.OWNER) return
-        sh("pm remove-user $id")
-    }
-
     /**
-     * Makes sure the space exists, is running and works. Creating one tries each method in turn and keeps the
-     * first that passes the check: the space is only counted as working once [probe] has been installed in it.
-     * [probe] is the app about to be cloned; with [keep] false it is taken out again.
+     * Makes sure the clone space is there and running. PocketScreen never creates a user or profile. When
+     * there is no space yet, the result says so and carries, in [Result.foreign], a profile the phone already
+     * has (the phone maker's "Dual apps", say) for the caller to offer to the user. Nothing is changed on the
+     * phone here.
      */
     @Synchronized
-    fun ensure(ctx: Context, probe: String?, keep: Boolean = true, progress: (String) -> Unit = {}): Result {
+    fun ensure(ctx: Context): Result {
         val st = status(ctx)
         when (st.state) {
             State.NO_SERVICE -> return Result(false, message = "PocketScreen isn't connected to Shizuku.")
@@ -340,38 +327,16 @@ object CloneSpace {
             }
             State.NOT_SET_UP -> {}
         }
-        if (probe == null) return Result(false, message = "No app to test the clone space with.")
-        return create(ctx, probe, keep, progress)
-    }
-
-    private fun create(ctx: Context, probe: String, keep: Boolean, progress: (String) -> Unit): Result {
-        val owner = AppRef.OWNER
-        val errors = StringBuilder()
-        val methods = listOf(
-            "profile-clone" to "pm create-user --profileOf $owner --user-type android.os.usertype.profile.CLONE '$SPACE_NAME'",
-            "managed" to "pm create-user --profileOf $owner --managed '$SPACE_NAME'"
-        )
-        for ((method, cmd) in methods) {
-            progress("Setting up the clone space")
-            val out = sh(cmd)
-            val id = parseCreatedId(out)
-            if (id == null || id == owner) { errors.append("$method: ${out.trim().take(200)}\n"); continue }
-            // From here the user exists and we made it, so a failed check removes it again.
-            sh("am start-user -w $id")
-            val running = unlocked(id)
-            note("space $id running and unlocked: $running")
-            if (!running) { errors.append("$method: user $id would not start\n"); removeUser(id); continue }
-            progress("Checking the clone space")
-            if (!probe(id, probe, keep)) { errors.append("$method: $probe could not be copied into user $id\n"); removeUser(id); continue }
-            saveRecord(ctx, Record(id, SPACE_NAME, method, CREATED))
-            installSystemPieces(id)
-            return Result(true, id, "Created with method $method.", created = true)
-        }
         val foreign = findForeign(ctx)
-        return Result(false, message = "Couldn't create a clone space.\n$errors".trim(), foreign = foreign)
+        val message = if (foreign != null)
+            "PocketScreen doesn't create users or profiles. This phone already has \"${foreign.name}\", which can be used for clones."
+        else
+            "This phone has no profile to put clones in, and PocketScreen doesn't create users or profiles. " +
+                "Turn on the phone's own dual apps or app cloner in Settings, then try again."
+        return Result(false, message = message, foreign = foreign)
     }
 
-    /** A profile of the main user that we didn't create (the phone maker's "Dual apps", say), if there is one. */
+    /** A profile of the main user that PocketScreen isn't using yet (the phone maker's "Dual apps", say), if there is one. */
     fun findForeign(ctx: Context): User? {
         val rec = record(ctx)
         return listUsers()?.firstOrNull { it.id != AppRef.OWNER && it.isProfile && !(rec != null && it.id == rec.id && it.name == rec.name) }
@@ -445,11 +410,11 @@ object CloneSpace {
         note("space before: ${before.state} (${before.text})")
         note("recorded: ${record(ctx)}")
         sh("pm list users")
-        val res = ensure(ctx, probe, keep = false)
-        val worked = if (res.ok && !res.created && probe != null) probe(res.userId, probe, keep = false) else res.ok
+        val res = ensure(ctx)
+        val worked = if (res.ok && probe != null) probe(res.userId, probe, keep = false) else res.ok
         note("verdict: " + when {
-            res.ok && worked -> "supported (${record(ctx)?.method ?: "?"}${if (res.created) ", created just now" else ", space already there"})"
-            res.foreign != null -> "not created; the phone already has a profile \"${res.foreign.name}\" (user ${res.foreign.id}) that could be used"
+            res.ok && worked -> "supported (using user ${res.userId}, ${record(ctx)?.origin ?: "?"})"
+            res.foreign != null -> "no clone space yet; the phone has a profile \"${res.foreign.name}\" (user ${res.foreign.id}) that could be used"
             else -> "not supported: ${res.message}"
         })
         val rec = record(ctx)

@@ -58,8 +58,9 @@ object Clones {
         else ctx.packageManager.getLaunchIntentForPackage(app.pkg)?.component?.flattenToShortString()
 
     /**
-     * Makes a clone of an installed app: sets up the clone space if needed, copies the app into it and saves
-     * the record. Blocks; [progress] gets short plain steps. Android allows one clone of an app.
+     * Makes a clone of an installed app: copies the app into the clone space and saves the record. It never
+     * creates a user or profile; with no space yet, the result carries a profile the phone already has, to
+     * offer. Blocks; [progress] gets short plain steps. Android allows one clone of an app.
      */
     fun create(ctx: Context, pkg: String, nickname: String? = null, progress: (String) -> Unit = {}): CloneSpace.Result {
         forPkg(ctx, pkg)?.let { return CloneSpace.Result(false, it.user, "This app already has a clone.") }
@@ -67,7 +68,7 @@ object Clones {
             ?: return CloneSpace.Result(false, message = "This app has no launcher activity.")
         val label = Apps.label(ctx, AppRef(pkg))
         val nick = clean(nickname?.takeIf { it.isNotBlank() } ?: "$label (clone)")
-        val space = CloneSpace.ensure(ctx, pkg, keep = true, progress = progress)
+        val space = CloneSpace.ensure(ctx)
         if (!space.ok) return space
         progress("Copying $label")
         val added = CloneSpace.addApp(ctx, pkg, space.userId)

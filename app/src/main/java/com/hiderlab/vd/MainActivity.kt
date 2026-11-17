@@ -1686,7 +1686,7 @@ class MainActivity : Activity() {
         Ui.sheet(this) { body, dlg ->
             body.addView(Ui.text(this, "Use \"${f.name}\" for clones?", 22f, Ui.TEXT, bold = true))
             Ui.add(body, Ui.text(this,
-                "PocketScreen couldn't make its own clone space, but this phone already has a profile called \"${f.name}\" " +
+                "PocketScreen doesn't create users or profiles, but this phone already has a profile called \"${f.name}\" " +
                     "(the phone maker's own dual apps, for example). PocketScreen can put the clone of ${a.label} there. " +
                     "It will not delete that profile, and apps already in it stay as they are.", 14f, Ui.MUTED), top = 4)
             Ui.add(body, Ui.button(this, "Use it", Ui.Kind.FILLED) {
