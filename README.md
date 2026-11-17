@@ -96,3 +96,7 @@ The debug build is signed with `app/hiderlab.jks`, a key that is committed to th
 - Memory and CPU are read from `dumpsys`, whose output differs between devices. A value that cannot be read is simply left out.
 - Auto-stop only knows about apps PocketScreen launched, and it needs Shizuku and the service to be connected.
 - Checks run every 30 seconds, so a stop can be up to 30 seconds late.
+
+## License
+
+PocketScreen is source-available under the [PolyForm Strict License 1.0.0](LICENSE). You may read the code and use the app for any noncommercial purpose, such as personal use, study or hobby projects. You may not copy, redistribute, modify or build new works from it, and you may not use it commercially. For anything else, ask first.
