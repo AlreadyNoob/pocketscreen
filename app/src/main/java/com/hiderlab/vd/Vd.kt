@@ -90,45 +90,69 @@ object Vd {
 
     fun exec(cmd: String): String = try { service?.exec(cmd) ?: "ERR: not connected" } catch (t: Throwable) { "ERR: $t" }
 
-    fun tasks(display: Int): List<Pair<Int, String>> {
+    /** A task on a display: its id, which copy of the app it is, and how its user was worked out (see [CloneSpace.parseTasks]). */
+    data class Task(val id: Int, val app: AppRef, val rule: Char = 'd')
+
+    private var cloneTaskLogs = 0
+
+    /**
+     * The tasks on a display, from [IVdService.tasksOn]. A line is `taskId|package|user|rule`, with the raw Task line
+     * as a fifth column for a task that isn't the owner's. The older two-column form is still understood (user =
+     * owner), in case an older service is still bound after an update.
+     */
+    fun tasks(display: Int): List<Task> {
         val raw = try { service?.tasksOn(display) ?: "" } catch (t: Throwable) { "" }
         if (raw.startsWith("ERR")) { log(raw); return emptyList() }
         return raw.lines().mapNotNull {
-            val p = it.split("|")
-            if (p.size == 2) p[0].toIntOrNull()?.let { id -> id to p[1] } else null
+            val p = it.split("|", limit = 5)
+            val id = p.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
+            if (p.size == 2) return@mapNotNull Task(id, AppRef(p[1]))
+            if (p.size < 4) return@mapNotNull null
+            val user = p[2].toIntOrNull() ?: return@mapNotNull null
+            val t = Task(id, AppRef(p[1], user), p[3].firstOrNull() ?: 'd')
+            // The service can't write the app's log, so the first few clone task lines are written here, to check the parsing.
+            if (t.app.isClone && p.size == 5 && cloneTaskLogs < 5) {
+                cloneTaskLogs++
+                log("clone task (user $user, rule ${t.rule}): ${p[4]}")
+            }
+            t
         }
     }
+
+    /** True if a process of this copy of the app exists, false if not, null if that can't be told. */
+    fun isRunning(app: AppRef): Boolean? =
+        CloneSpace.processes({ exec(it) }, listOf(app.pkg))?.any { it.name == app.pkg && it.user == app.user }
 
     // ---- per-app mute ----
 
     private fun mutePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("mute", Context.MODE_PRIVATE)
 
-    /** Apps the user wants muted whenever they run on a hidden display. Saved on the phone. */
+    /** The [AppRef.key]s the user wants muted whenever they run on a hidden display. Saved on the phone. */
     fun mutedApps(ctx: Context): Set<String> = mutePrefs(ctx).getStringSet("pkgs", emptySet()) ?: emptySet()
 
-    fun isMuted(ctx: Context, pkg: String): Boolean = pkg in mutedApps(ctx)
+    fun isMuted(ctx: Context, app: AppRef): Boolean = app.key in mutedApps(ctx)
 
     /** Remembers the choice only. It is applied to the app the next time it is launched. */
-    fun setMutedPref(ctx: Context, pkg: String, muted: Boolean) {
+    fun setMutedPref(ctx: Context, app: AppRef, muted: Boolean) {
         val s = HashSet(mutedApps(ctx))
-        if (muted) s.add(pkg) else s.remove(pkg)
+        if (muted) s.add(app.key) else s.remove(app.key)
         mutePrefs(ctx).edit().putStringSet("pkgs", s).apply()
     }
 
     /**
      * Turns the app's sound off or on right now, using the PLAY_AUDIO app-op (the same switch
-     * that "mute this app" tools use). Returns the shell output for the log.
+     * that "mute this app" tools use). It is set for this copy's user only. Returns the shell output for the log.
      */
-    private fun applyAudio(pkg: String, muted: Boolean): String {
-        val set = exec("cmd appops set $pkg PLAY_AUDIO ${if (muted) "deny" else "allow"}")
-        val now = exec("cmd appops get $pkg PLAY_AUDIO").trim()
+    private fun applyAudio(app: AppRef, muted: Boolean): String {
+        val set = exec("cmd appops set --user ${app.user} ${app.pkg} PLAY_AUDIO ${if (muted) "deny" else "allow"}")
+        val now = exec("cmd appops get --user ${app.user} ${app.pkg} PLAY_AUDIO").trim()
         return (set.trim() + "\n" + now).trim()
     }
 
     /** Saves the choice and applies it to the running app. */
-    fun setMuted(ctx: Context, pkg: String, muted: Boolean): String {
-        setMutedPref(ctx, pkg, muted)
-        return applyAudio(pkg, muted)
+    fun setMuted(ctx: Context, app: AppRef, muted: Boolean): String {
+        setMutedPref(ctx, app, muted)
+        return applyAudio(app, muted)
     }
 
     /**
@@ -136,24 +160,26 @@ object Vd {
      * sound back; otherwise it would stay silent on the main screen too. The choice itself is kept
      * and is applied again on the next launch.
      */
-    private fun restoreAudio(ctx: Context, pkg: String) {
-        if (isMuted(ctx, pkg)) applyAudio(pkg, false)
+    private fun restoreAudio(ctx: Context, app: AppRef) {
+        if (isMuted(ctx, app)) applyAudio(app, false)
     }
 
     /** Gives sound back to every muted app and clears the saved choice, so the mute icons show it too. */
     fun restoreAllAudio(ctx: Context): String =
-        mutedApps(ctx).toList().joinToString("\n") { "$it: " + setMuted(ctx, it, false).lines().lastOrNull().orEmpty() }
-            .ifEmpty { "No muted apps." }
+        mutedApps(ctx).toList().joinToString("\n") {
+            val app = AppRef.fromKey(it)
+            "$it: " + setMuted(ctx, app, false).lines().lastOrNull().orEmpty()
+        }.ifEmpty { "No muted apps." }
 
     /** Re-applies the saved sound state; used shortly after launch, once the app's process exists. */
-    fun syncAudio(ctx: Context, pkg: String): String = applyAudio(pkg, isMuted(ctx, pkg))
+    fun syncAudio(ctx: Context, app: AppRef): String = applyAudio(app, isMuted(ctx, app))
 
-    /** Force-stops an app and returns its sound to normal. */
-    fun stopApp(ctx: Context, pkg: String): String {
-        val r = exec("am force-stop $pkg")
-        try { Freezer.forget(ctx, pkg) } catch (_: Throwable) {} // drop its "frozen" record
-        restoreAudio(ctx, pkg)
-        clearSession(ctx, pkg)
+    /** Force-stops one copy of an app (only that user's) and returns its sound to normal. */
+    fun stopApp(ctx: Context, app: AppRef): String {
+        val r = exec("am force-stop --user ${app.user} ${app.pkg}")
+        try { Freezer.forget(ctx, app) } catch (_: Throwable) {} // drop its "frozen" record
+        restoreAudio(ctx, app)
+        clearSession(ctx, app)
         return r
     }
 
@@ -161,16 +187,16 @@ object Vd {
      * Force-stops an app, then removes its display. The display is removed even if the app's task
      * lingers for a moment; it is only kept when a different app is still running on it.
      */
-    fun stopAppAndDisplay(ctx: Context, pkg: String): String {
-        val id = displayOf(pkg)
-        var r = stopApp(ctx, pkg)
+    fun stopAppAndDisplay(ctx: Context, app: AppRef): String {
+        val id = displayOf(app)
+        var r = stopApp(ctx, app)
         if (id != null) {
             var tries = 0
-            while (tries < 30 && tasks(id).any { it.second == pkg }) {
+            while (tries < 30 && tasks(id).any { it.app == app }) {
                 Thread.sleep(100); tries++
-                if (tries == 15) r = exec("am force-stop $pkg") // still there after 1.5 s: ask again
+                if (tries == 15) r = exec("am force-stop --user ${app.user} ${app.pkg}") // still there after 1.5 s: ask again
             }
-            if (tasks(id).none { it.second != pkg }) releaseOnly(ctx, id)
+            if (tasks(id).none { it.app != app }) releaseOnly(ctx, id)
         }
         return r
     }
@@ -181,73 +207,99 @@ object Vd {
 
     /**
      * Approximate memory (PSS, from dumpsys meminfo) and recent CPU use (from dumpsys cpuinfo, an
-     * average over the last few minutes) for each package. Missing values are null.
+     * average over the last few minutes) for each app, keyed by [AppRef.key]. Missing values are null.
+     * Only the processes of that copy's user count. If the process list can't be read, an app that has no clone
+     * is still looked up by name; a copy that could be mixed up with another gets no values rather than the wrong ones.
      */
-    fun appStats(pkgs: List<String>): Map<String, Stat> {
-        if (pkgs.isEmpty()) return emptyMap()
-        val cpuByPkg = HashMap<String, Double>()
+    fun appStats(ctx: Context, apps: List<AppRef>): Map<String, Stat> {
+        if (apps.isEmpty()) return emptyMap()
+        val pkgs = CloneSpace.safePkgs(apps.map { it.pkg })
+        val procs = CloneSpace.processes({ exec(it) }, pkgs, children = true)
+        fun pidsOf(a: AppRef): Set<Int>? = procs?.filter { it.user == a.user && (it.name == a.pkg || it.name.startsWith(a.pkg + ":")) }?.map { it.pid }?.toSet()
+        fun byNameOk(a: AppRef) = !a.isClone && Clones.forPkg(ctx, a.pkg) == null
+        val cpuByKey = HashMap<String, Double>()
         try {
             val pat = pkgs.joinToString("|")
             val out = exec("dumpsys cpuinfo | grep -E '/($pat)'")
-            val re = Regex("(\\d+(?:\\.\\d+)?)%\\s+\\d+/([\\w.]+)(?::[\\w.]+)?:")
+            val re = Regex("(\\d+(?:\\.\\d+)?)%\\s+(\\d+)/([\\w.]+)(?::[\\w.]+)?:")
             for (line in out.lines()) {
                 val m = re.find(line) ?: continue
-                val name = m.groupValues[2]
-                if (name in pkgs) cpuByPkg[name] = (cpuByPkg[name] ?: 0.0) + (m.groupValues[1].toDoubleOrNull() ?: 0.0)
+                val pid = m.groupValues[2].toIntOrNull() ?: continue
+                val name = m.groupValues[3]
+                val pct = m.groupValues[1].toDoubleOrNull() ?: 0.0
+                for (a in apps) {
+                    if (a.pkg != name) continue
+                    val mine = pidsOf(a)?.let { pid in it } ?: byNameOk(a)
+                    if (mine) cpuByKey[a.key] = (cpuByKey[a.key] ?: 0.0) + pct
+                }
             }
         } catch (_: Throwable) {}
         // dumpsys cpuinfo counts one full core as 100%, so 130% means 1.3 cores. Show share of the whole CPU.
         val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val res = HashMap<String, Stat>()
-        for (pkg in pkgs) {
+        for (a in apps) {
             var mem: Int? = null
             try {
-                val out = exec("dumpsys meminfo $pkg")
-                val m = Regex("TOTAL PSS:\\s+(\\d+)").find(out) ?: Regex("(?m)^\\s*TOTAL\\s+(\\d+)").find(out)
-                mem = m?.groupValues?.get(1)?.toLongOrNull()?.let { (it / 1024).toInt() }
+                val pids = pidsOf(a)
+                mem = if (pids != null) { if (pids.isEmpty()) null else memOfPids(pids) }
+                else if (byNameOk(a)) memOf(exec("dumpsys meminfo ${a.pkg}"))
+                else null
             } catch (_: Throwable) {}
-            res[pkg] = Stat(mem, cpuByPkg[pkg]?.let { (it / cores).coerceAtMost(100.0) })
+            res[a.key] = Stat(mem, cpuByKey[a.key]?.let { (it / cores).coerceAtMost(100.0) })
         }
         return res
+    }
+
+    /** The PSS in MB from one `dumpsys meminfo` output, or null. */
+    private fun memOf(out: String): Int? {
+        val m = Regex("TOTAL PSS:\\s+(\\d+)").find(out) ?: Regex("(?m)^\\s*TOTAL\\s+(\\d+)").find(out)
+        return m?.groupValues?.get(1)?.toLongOrNull()?.let { (it / 1024).toInt() }
+    }
+
+    /** Memory of exactly these processes, added up: one `dumpsys meminfo <pid>` each. Null if none could be read. */
+    private fun memOfPids(pids: Set<Int>): Int? {
+        val cmd = "for p in ${pids.joinToString(" ")}; do echo ==; dumpsys meminfo \$p | grep -E 'TOTAL PSS:|^ *TOTAL +[0-9]'; done"
+        val parts = exec(cmd).split("==").mapNotNull { memOf(it) }
+        return if (parts.isEmpty()) null else parts.sum()
     }
 
     // ---- quick launch presets ----
 
     private fun presetPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("presets", Context.MODE_PRIVATE)
 
-    /** Saved apps for one-tap launch: package and orientation, in the order they were saved. */
-    fun presets(ctx: Context): List<Pair<String, Boolean>> =
+    /** Saved apps for one-tap launch: the app and its orientation, in the order they were saved. */
+    fun presets(ctx: Context): List<Pair<AppRef, Boolean>> =
         (presetPrefs(ctx).getString("list", "") ?: "").lines().mapNotNull {
             val p = it.split("|")
-            if (p.size == 2 && p[0].isNotEmpty()) p[0] to (p[1] == "1") else null
+            if (p.size == 2 && p[0].isNotEmpty()) AppRef.fromKey(p[0]) to (p[1] == "1") else null
         }
 
-    fun presetOf(ctx: Context, pkg: String): Boolean? = presets(ctx).firstOrNull { it.first == pkg }?.second
+    fun presetOf(ctx: Context, app: AppRef): Boolean? = presets(ctx).firstOrNull { it.first == app }?.second
 
-    private fun writePresets(ctx: Context, l: List<Pair<String, Boolean>>) {
-        presetPrefs(ctx).edit().putString("list", l.joinToString("\n") { "${it.first}|${if (it.second) 1 else 0}" }).apply()
+    private fun writePresets(ctx: Context, l: List<Pair<AppRef, Boolean>>) {
+        presetPrefs(ctx).edit().putString("list", l.joinToString("\n") { "${it.first.key}|${if (it.second) 1 else 0}" }).apply()
     }
 
-    fun savePreset(ctx: Context, pkg: String, landscape: Boolean) {
+    fun savePreset(ctx: Context, app: AppRef, landscape: Boolean) {
         val l = presets(ctx).toMutableList()
-        val i = l.indexOfFirst { it.first == pkg }
-        if (i >= 0) l[i] = pkg to landscape else l.add(pkg to landscape)
+        val i = l.indexOfFirst { it.first == app }
+        if (i >= 0) l[i] = app to landscape else l.add(app to landscape)
         writePresets(ctx, l)
     }
 
-    fun removePreset(ctx: Context, pkg: String) { writePresets(ctx, presets(ctx).filter { it.first != pkg }) }
+    fun removePreset(ctx: Context, app: AppRef) { writePresets(ctx, presets(ctx).filter { it.first != app }) }
 
     // ---- session time ----
 
     private fun sessionPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("sessions", Context.MODE_PRIVATE)
 
-    fun markSession(ctx: Context, pkg: String) {
-        sessionPrefs(ctx).edit().putLong(pkg, System.currentTimeMillis()).apply()
-        setDeadline(ctx, pkg)
+    fun markSession(ctx: Context, app: AppRef) {
+        sessionPrefs(ctx).edit().putLong(app.key, System.currentTimeMillis()).apply()
+        setDeadline(ctx, app)
     }
-    fun clearSession(ctx: Context, pkg: String) {
-        sessionPrefs(ctx).edit().remove(pkg).apply()
-        deadlinePrefs(ctx).edit().remove(pkg).apply()
+    fun clearSession(ctx: Context, app: AppRef) {
+        sessionPrefs(ctx).edit().remove(app.key).apply()
+        deadlinePrefs(ctx).edit().remove(app.key).apply()
     }
 
     // ---- "stop at a clock time" ----
@@ -266,23 +318,23 @@ object Vd {
         return c.timeInMillis
     }
 
-    /** Fixes the stop moment for [pkg] from now: the next time its clock limit comes round. Removed if there is none. */
-    fun setDeadline(ctx: Context, pkg: String) {
-        val at = AppSettings.effectiveAt(ctx, pkg)
+    /** Fixes the stop moment for [app] from now: the next time its clock limit comes round. Removed if there is none. */
+    fun setDeadline(ctx: Context, app: AppRef) {
+        val at = AppSettings.effectiveAt(ctx, app)
         val e = deadlinePrefs(ctx).edit()
-        if (at > 0) e.putLong(pkg, nextOccurrence(at - 1, System.currentTimeMillis())) else e.remove(pkg)
+        if (at > 0) e.putLong(app.key, nextOccurrence(at - 1, System.currentTimeMillis())) else e.remove(app.key)
         e.apply()
     }
 
     /** After a clock limit was changed in Settings: running apps get their next stop moment from now. */
     fun refreshDeadlines(ctx: Context) {
-        for (pkg in sessionPrefs(ctx).all.keys) setDeadline(ctx, pkg)
+        for (key in sessionPrefs(ctx).all.keys) setDeadline(ctx, AppRef.fromKey(key))
     }
 
-    /** When [pkg] will be stopped by its clock limit (ms since epoch), or null if none applies. */
-    fun deadline(ctx: Context, pkg: String): Long? {
-        if (AppSettings.effectiveAt(ctx, pkg) <= 0) return null
-        return deadlinePrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+    /** When [app] will be stopped by its clock limit (ms since epoch), or null if none applies. */
+    fun deadline(ctx: Context, app: AppRef): Long? {
+        if (AppSettings.effectiveAt(ctx, app) <= 0) return null
+        return deadlinePrefs(ctx).getLong(app.key, 0L).takeIf { it > 0L }
     }
 
     fun clockText(ctx: Context, minuteOfDay: Int): String {
@@ -292,12 +344,12 @@ object Vd {
         return android.text.format.DateFormat.getTimeFormat(ctx).format(c.time)
     }
 
-    /** Battery, temperature and clock limits that apply to [pkg], as "35% battery · 45°C · 7:00 AM". Null if none. */
-    fun limitsText(ctx: Context, pkg: String): String? {
+    /** Battery, temperature and clock limits that apply to [app], as "35% battery · 45°C · 7:00 AM". Null if none. */
+    fun limitsText(ctx: Context, app: AppRef): String? {
         val parts = ArrayList<String>()
-        AppSettings.effectiveBattery(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it% battery") }
-        AppSettings.effectiveTemp(ctx, pkg).takeIf { it > 0 }?.let { parts.add("$it°C") }
-        deadline(ctx, pkg)?.let { parts.add(deadlineText(ctx, it)) }
+        AppSettings.effectiveBattery(ctx, app).takeIf { it > 0 }?.let { parts.add("$it% battery") }
+        AppSettings.effectiveTemp(ctx, app).takeIf { it > 0 }?.let { parts.add("$it°C") }
+        deadline(ctx, app)?.let { parts.add(deadlineText(ctx, it)) }
         return if (parts.isEmpty()) null else "Stops at " + parts.joinToString(" · ")
     }
 
@@ -308,12 +360,12 @@ object Vd {
         return if (day.format(java.util.Date(at)) == day.format(java.util.Date())) clock else "tomorrow $clock"
     }
 
-    /** When [pkg]'s current session started (ms since epoch), or null if unknown. */
-    fun sessionStart(ctx: Context, pkg: String): Long? = sessionPrefs(ctx).getLong(pkg, 0L).takeIf { it > 0L }
+    /** When [app]'s current session started (ms since epoch), or null if unknown. */
+    fun sessionStart(ctx: Context, app: AppRef): Long? = sessionPrefs(ctx).getLong(app.key, 0L).takeIf { it > 0L }
 
-    /** Whole minutes [pkg] has been running here, or null if unknown. */
-    fun sessionMinutes(ctx: Context, pkg: String): Long? {
-        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+    /** Whole minutes [app] has been running here, or null if unknown. */
+    fun sessionMinutes(ctx: Context, app: AppRef): Long? {
+        val t = sessionPrefs(ctx).getLong(app.key, 0L)
         return if (t <= 0L) null else ((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0)
     }
 
@@ -324,21 +376,21 @@ object Vd {
         else -> "${mins / 60}h ${mins % 60}m"
     }
 
-    /** How long [pkg] has been running here, as "5m" / "2h 10m", or null if unknown. */
-    fun sessionText(ctx: Context, pkg: String): String? {
-        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+    /** How long [app] has been running here, as "5m" / "2h 10m", or null if unknown. */
+    fun sessionText(ctx: Context, app: AppRef): String? {
+        val t = sessionPrefs(ctx).getLong(app.key, 0L)
         if (t <= 0L) return null
         return fmtMinutes(((System.currentTimeMillis() - t) / 60000L).coerceAtLeast(0))
     }
 
     /**
      * Time left before auto-stop, as "18m left" / "1h 5m left", or null when no time limit applies
-     * to [pkg] (neither its own nor the default) or the start time is unknown.
+     * to [app] (neither its own nor the default) or the start time is unknown.
      */
-    fun remainingText(ctx: Context, pkg: String): String? {
-        val limit = AppSettings.effectiveMinutes(ctx, pkg)
+    fun remainingText(ctx: Context, app: AppRef): String? {
+        val limit = AppSettings.effectiveMinutes(ctx, app)
         if (limit <= 0) return null
-        val t = sessionPrefs(ctx).getLong(pkg, 0L)
+        val t = sessionPrefs(ctx).getLong(app.key, 0L)
         if (t <= 0L) return null
         val leftMs = limit * 60000L - (System.currentTimeMillis() - t)
         if (leftMs <= 0L) return "stopping soon"
@@ -375,17 +427,17 @@ object Vd {
 
     private fun appSizePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("app_size", Context.MODE_PRIVATE)
 
-    fun appCfg(ctx: Context, pkg: String): SizeCfg? {
-        val v = appSizePrefs(ctx).getString(pkg, null) ?: return null
+    fun appCfg(ctx: Context, app: AppRef): SizeCfg? {
+        val v = appSizePrefs(ctx).getString(app.key, null) ?: return null
         val p = v.split(",")
         if (p.size != 4) return null
         return SizeCfg(p[0] == "1", p[1].toIntOrNull() ?: return null, p[2].toIntOrNull() ?: return null, p[3].toIntOrNull() ?: return null)
     }
 
     /** Pass null to go back to the default size. */
-    fun setAppCfg(ctx: Context, pkg: String, c: SizeCfg?) {
+    fun setAppCfg(ctx: Context, app: AppRef, c: SizeCfg?) {
         val e = appSizePrefs(ctx).edit()
-        if (c == null) e.remove(pkg) else e.putString(pkg, "${if (c.matchRatio) 1 else 0},${c.width},${c.customH},${c.dpi}")
+        if (c == null) e.remove(app.key) else e.putString(app.key, "${if (c.matchRatio) 1 else 0},${c.width},${c.customH},${c.dpi}")
         e.apply()
     }
 
@@ -429,8 +481,8 @@ object Vd {
         } catch (_: Throwable) { hz }
     }
 
-    /** The rate [pkg] gets on its next display, already adjusted for the screen. */
-    fun refreshFor(ctx: Context, pkg: String): Int = snapRate(ctx, AppSettings.effectiveRefreshRate(ctx, pkg))
+    /** The rate [app] gets on its next display, already adjusted for the screen. */
+    fun refreshFor(ctx: Context, app: AppRef): Int = snapRate(ctx, AppSettings.effectiveRefreshRate(ctx, app))
 
     /** Creates a display and returns its id, or -1 on failure. */
     fun createDisplay(ctx: Context, landscape: Boolean, cfg: SizeCfg? = null, fps: Int = 0): Int {
@@ -453,18 +505,18 @@ object Vd {
 
     /**
      * Starts the notification service (or lets a running one know). Called when an app has been
-     * confirmed on its display, so the first notification already counts it. [pkg] is that app.
+     * confirmed on its display, so the first notification already counts it. [app] is that app.
      */
-    fun startHost(ctx: Context, pkg: String? = null) {
+    fun startHost(ctx: Context, app: AppRef? = null) {
         try {
             val i = Intent(ctx.applicationContext, HostService::class.java)
-            if (pkg != null) i.putExtra(HostService.EXTRA_PKG, pkg)
+            if (app != null) i.putExtra(HostService.EXTRA_PKG, app.key)
             ctx.applicationContext.startForegroundService(i)
         } catch (t: Throwable) { log("Notification service not started: $t") }
     }
 
-    /** The hidden display [pkg] is already running on, or null. */
-    fun displayOf(pkg: String): Int? = displays.firstOrNull { d -> tasks(d.id).any { it.second == pkg } }?.id
+    /** The hidden display this copy of the app is already running on, or null. A clone and its original are different apps here. */
+    fun displayOf(app: AppRef): Int? = displays.firstOrNull { d -> tasks(d.id).any { it.app == app } }?.id
 
     /**
      * Every app gets its own display. Android only keeps the top app on a display resumed, so a
@@ -478,21 +530,23 @@ object Vd {
             ?: createDisplay(ctx, landscape, cfg, fps)
     }
 
-    fun launch(ctx: Context, pkg: String, display: Int): String {
-        val comp = ctx.packageManager.getLaunchIntentForPackage(pkg)?.component?.flattenToShortString()
-            ?: return "No launcher activity for $pkg"
+    fun launch(ctx: Context, app: AppRef, display: Int): String {
+        val comp = Clones.launchComponent(ctx, app) ?: return "No launcher activity for ${app.pkg}"
+        // A clone lives in the clone space; it must be running and unlocked before anything starts in it.
+        if (app.isClone && !CloneSpace.ensureRunning(app.user)) return "The clone space won't start."
         // Apps always start with sound on. Mute again from the app's menu if wanted.
-        setMutedPref(ctx, pkg, false)
-        applyAudio(pkg, false)
-        markSession(ctx, pkg)
-        clearCrash(ctx, pkg)
-        clearAutoStop(ctx, pkg) // it is running again
-        displays.firstOrNull { it.id == display }?.let { orientPrefs(ctx).edit().putBoolean(pkg, it.landscape).apply() }
-        // If it is already open on the main screen, try to move that task instead of starting a copy.
-        val onMain = tasks(0).firstOrNull { it.second == pkg }
+        setMutedPref(ctx, app, false)
+        applyAudio(app, false)
+        markSession(ctx, app)
+        clearCrash(ctx, app)
+        clearAutoStop(ctx, app) // it is running again
+        displays.firstOrNull { it.id == display }?.let { orientPrefs(ctx).edit().putBoolean(app.key, it.landscape).apply() }
+        // If this copy is already open on the main screen, try to move that task instead of starting a copy.
+        // Only a task of the same user counts, so launching a clone never takes the original off the main screen.
+        val onMain = tasks(0).firstOrNull { it.app == app }
         if (onMain != null) {
-            val r = exec("am display move-stack ${onMain.first} $display")
-            if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved $pkg to display $display. $r"
+            val r = exec("am display move-stack ${onMain.id} $display")
+            if (!Regex("(?i)error|exception|unknown|usage").containsMatchIn(r)) return "Moved ${app.pkg} to display $display. $r"
             log("move-stack failed, starting fresh: $r")
         }
         // -f = NEW_TASK, plus EXCLUDE_FROM_RECENTS unless turned off in Settings. Android only reads
@@ -500,7 +554,7 @@ object Vd {
         // (still listed in Recents from an earlier run), the flag is ignored and the entry stays.
         // CLEAR_TASK resets that task so the flag takes effect on it too.
         val flags = if (AppSettings.hideFromRecents(ctx)) LAUNCH_FLAGS or 0x00800000 or 0x00008000 else LAUNCH_FLAGS // EXCLUDE_FROM_RECENTS | CLEAR_TASK
-        val started = exec("am start --display $display -f $flags -n $comp")
+        val started = exec("am start --user ${app.user} --display $display -f $flags -n $comp")
         return started
     }
 
@@ -514,48 +568,57 @@ object Vd {
     // ---- unexpected exits ----
 
     /** An app PocketScreen launched whose process died without us stopping it. */
-    data class Crash(val pkg: String, val whenMs: Long, val reason: String, val landscape: Boolean)
+    data class Crash(val app: AppRef, val whenMs: Long, val reason: String, val landscape: Boolean)
 
     private fun crashPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("crashes", Context.MODE_PRIVATE)
     private fun orientPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("orient", Context.MODE_PRIVATE)
 
-    fun crashes(ctx: Context): List<Crash> = crashPrefs(ctx).all.mapNotNull { (pkg, v) ->
+    /** The orientation this copy last ran in, or null if it never ran here. */
+    fun lastLandscape(ctx: Context, app: AppRef): Boolean? =
+        orientPrefs(ctx).takeIf { it.contains(app.key) }?.getBoolean(app.key, false)
+
+    fun crashes(ctx: Context): List<Crash> = crashPrefs(ctx).all.mapNotNull { (key, v) ->
         val p = (v as? String)?.split("|", limit = 3) ?: return@mapNotNull null
         val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
-        Crash(pkg, t, p.getOrNull(2).orEmpty(), p.getOrNull(1) == "1")
+        Crash(AppRef.fromKey(key), t, p.getOrNull(2).orEmpty(), p.getOrNull(1) == "1")
     }.sortedByDescending { it.whenMs }
 
     // ---- apps stopped by an auto-stop limit ----
 
     /** [kind] is "Temperature", "Battery" or "Timer"; [ranMin] is how long the app had been running. */
-    data class AutoStop(val pkg: String, val whenMs: Long, val ranMin: Long, val kind: String, val detail: String, val landscape: Boolean)
+    data class AutoStop(val app: AppRef, val whenMs: Long, val ranMin: Long, val kind: String, val detail: String, val landscape: Boolean)
 
     private fun stopPrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("autostops", Context.MODE_PRIVATE)
 
-    fun recordAutoStop(ctx: Context, pkg: String, kind: String, detail: String) {
-        val ran = sessionMinutes(ctx, pkg) ?: 0L
-        val land = orientPrefs(ctx).getBoolean(pkg, false)
-        stopPrefs(ctx).edit().putString(pkg, listOf(System.currentTimeMillis(), ran, if (land) 1 else 0, kind, detail).joinToString("|")).apply()
+    fun recordAutoStop(ctx: Context, app: AppRef, kind: String, detail: String) {
+        val ran = sessionMinutes(ctx, app) ?: 0L
+        val land = orientPrefs(ctx).getBoolean(app.key, false)
+        stopPrefs(ctx).edit().putString(app.key, listOf(System.currentTimeMillis(), ran, if (land) 1 else 0, kind, detail).joinToString("|")).apply()
     }
 
     /** Kept until the user dismisses or relaunches the app. */
-    fun autoStops(ctx: Context): List<AutoStop> = stopPrefs(ctx).all.mapNotNull { (pkg, v) ->
+    fun autoStops(ctx: Context): List<AutoStop> = stopPrefs(ctx).all.mapNotNull { (key, v) ->
         val p = (v as? String)?.split("|", limit = 5) ?: return@mapNotNull null
         val t = p.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
-        AutoStop(pkg, t, p.getOrNull(1)?.toLongOrNull() ?: 0L, p.getOrNull(3).orEmpty(), p.getOrNull(4).orEmpty(), p.getOrNull(2) == "1")
+        AutoStop(AppRef.fromKey(key), t, p.getOrNull(1)?.toLongOrNull() ?: 0L, p.getOrNull(3).orEmpty(), p.getOrNull(4).orEmpty(), p.getOrNull(2) == "1")
     }.sortedByDescending { it.whenMs }
 
-    fun clearAutoStop(ctx: Context, pkg: String) { stopPrefs(ctx).edit().remove(pkg).apply() }
+    fun clearAutoStop(ctx: Context, app: AppRef) { stopPrefs(ctx).edit().remove(app.key).apply() }
 
-    fun clearCrash(ctx: Context, pkg: String) {
-        crashPrefs(ctx).edit().remove(pkg).apply()
-        HostService.cancelCrash(ctx, pkg) // the notification goes away with the entry
+    fun clearCrash(ctx: Context, app: AppRef) {
+        crashPrefs(ctx).edit().remove(app.key).apply()
+        HostService.cancelCrash(ctx, app) // the notification goes away with the entry
     }
 
-    /** Why the system says [pkg]'s last process ended, e.g. "CRASH" or "EXIT_SELF". Null if it can't be read. */
-    private fun lastExitReason(pkg: String): String? {
-        val out = exec("dumpsys activity exit-info $pkg")
-        return Regex("reason=\\d+ \\(([A-Z_ ]+)\\)").find(out)?.groupValues?.get(1)?.trim()
+    /**
+     * Why the system says this copy's last process ended, e.g. "CRASH" or "EXIT_SELF". Null if it can't be read.
+     * The exit list is by package name, so an entry only counts when it shows the same user. An entry that shows
+     * no user is used only for an original that has no clone, where nothing can be mixed up.
+     */
+    private fun lastExitReason(ctx: Context, app: AppRef): String? {
+        val entries = CloneSpace.parseExitInfo(exec("dumpsys activity exit-info ${app.pkg}"))
+        val loose = !app.isClone && Clones.forPkg(ctx, app.pkg) == null
+        return entries.firstOrNull { it.first == app.user || (it.first == null && loose) }?.second
     }
 
     private val EXPECTED_EXITS = setOf("EXIT_SELF", "USER_REQUESTED", "USER_STOPPED", "PACKAGE_UPDATED", "PACKAGE_STATE_CHANGE", "PERMISSION_CHANGE")
@@ -563,60 +626,55 @@ object Vd {
     /**
      * Looks for apps we launched that are no longer on any hidden display, whose process is gone, and
      * that we did not stop ourselves. Those are recorded as unexpected exits. Returns the new ones.
-     * [onDisplays] are the packages currently on a hidden display, [busy] are being launched right now.
+     * [onDisplays] are the apps currently on a hidden display, [busy] are being launched right now.
      */
-    fun checkCrashes(ctx: Context, onDisplays: Set<String>, busy: Set<String>): List<Crash> {
+    fun checkCrashes(ctx: Context, onDisplays: Set<AppRef>, busy: Set<AppRef>): List<Crash> {
         if (service == null) return emptyList()
         val found = ArrayList<Crash>()
         val now = System.currentTimeMillis()
         // An app that is running again (for example opened from the app drawer) is no longer "closed".
         for (c in crashes(ctx)) {
-            val p = exec("pidof ${c.pkg}").trim()
-            if (p.firstOrNull()?.isDigit() == true) clearCrash(ctx, c.pkg)
+            if (isRunning(c.app) == true) clearCrash(ctx, c.app)
         }
         // Only listed when an app we started is missing from the hidden displays.
-        val onMain by lazy { tasks(0).map { it.second }.toSet() }
-        for ((pkg, v) in sessionPrefs(ctx).all) {
+        val onMain by lazy { tasks(0).map { it.app }.toSet() }
+        for ((key, v) in sessionPrefs(ctx).all) {
             val started = v as? Long ?: continue
-            if (pkg in onDisplays || pkg in busy || now - started < 10_000L) continue
-            if (pkg in onMain) { // the user moved it to the main screen: a hand-off, not a crash
-                clearSession(ctx, pkg)
-                restoreAudio(ctx, pkg)
-                clearCrash(ctx, pkg)
+            val app = AppRef.fromKey(key)
+            if (app in onDisplays || app in busy || now - started < 10_000L) continue
+            if (app in onMain) { // the user moved it to the main screen: a hand-off, not a crash
+                clearSession(ctx, app)
+                restoreAudio(ctx, app)
+                clearCrash(ctx, app)
                 continue
             }
-            val pid = exec("pidof $pkg").trim()
-            if (pid.startsWith("ERR") ) continue
-            if (pid.isNotEmpty() && pid.firstOrNull()?.isDigit() == true) continue // still alive, just not on a display
-            val reason = lastExitReason(pkg)
-            clearSession(ctx, pkg)
-            restoreAudio(ctx, pkg)
+            val alive = isRunning(app) ?: continue
+            if (alive) continue // still alive, just not on a display
+            val reason = lastExitReason(ctx, app)
+            clearSession(ctx, app)
+            restoreAudio(ctx, app)
             if (reason != null && reason in EXPECTED_EXITS) continue
-            val c = Crash(pkg, now, reason?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Reason unknown",
-                orientPrefs(ctx).getBoolean(pkg, false))
-            crashPrefs(ctx).edit().putString(pkg, "${c.whenMs}|${if (c.landscape) 1 else 0}|${c.reason}").apply()
-            log("Unexpected exit: $pkg (${c.reason})")
+            val c = Crash(app, now, reason?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Reason unknown",
+                orientPrefs(ctx).getBoolean(app.key, false))
+            crashPrefs(ctx).edit().putString(app.key, "${c.whenMs}|${if (c.landscape) 1 else 0}|${c.reason}").apply()
+            log("Unexpected exit: ${app.key} (${c.reason})")
             found.add(c)
         }
         return found
     }
 
-    /** Which display a package's task is on, according to the system, or null if no task is found. */
-    fun displayOfTask(pkg: String): Int? {
+    /** Which display this copy's task is on, according to the system, or null if no task is found. */
+    fun displayOfTask(app: AppRef): Int? {
+        val pkg = CloneSpace.safePkgs(listOf(app.pkg)).firstOrNull() ?: return null
         val out = exec("dumpsys activity activities | grep -E 'Display #|mDisplayId=|Task\\{|ActivityRecord\\{' | grep -E 'Display #|$pkg'")
-        var current: Int? = null
-        for (line in out.lines()) {
-            Regex("Display #(\\d+)").find(line)?.let { current = it.groupValues[1].toInt() }
-            if (line.contains(pkg) && current != null) return current
-        }
-        return null
+        return CloneSpace.parseDisplayOf(out, pkg, app.user)
     }
 
     /** Facts about this phone that decide whether apps can run on a hidden display. For the debug log. */
-    fun diagnose(pkg: String, display: Int): String {
+    fun diagnose(app: AppRef, display: Int): String {
         fun sh(c: String) = exec(c).trim().lines().take(12).joinToString("\n")
         return buildString {
-            appendLine("--- Why did $pkg not start on display $display? ---")
+            appendLine("--- Why did ${app.key} not start on display $display? ---")
             appendLine("model: " + sh("getprop ro.product.model") + ", android " + sh("getprop ro.build.version.release") + " (sdk " + sh("getprop ro.build.version.sdk") + ")")
             appendLine("low_ram: " + sh("getprop ro.config.low_ram"))
             appendLine("secondary-display feature: " + sh("cmd package has-feature android.software.activities_on_secondary_displays"))
@@ -625,7 +683,7 @@ object Vd {
             appendLine("force_resizable: " + sh("settings get global force_resizable_activities"))
             appendLine("freeform setting: " + sh("settings get global enable_freeform_support"))
             appendLine("non-resizable multi-window: " + sh("settings get global enable_non_resizable_multi_window"))
-            appendLine("task display: " + displayOfTask(pkg))
+            appendLine("task display: " + displayOfTask(app))
         }
     }
 
@@ -645,7 +703,7 @@ object Vd {
 
     /** Force-stops the apps on one display, then removes it. */
     fun destroyDisplay(ctx: Context, id: Int) {
-        tasks(id).map { it.second }.distinct().forEach { stopApp(ctx, it) }
+        tasks(id).map { it.app }.distinct().forEach { stopApp(ctx, it) }
         releaseOnly(ctx, id)
     }
 

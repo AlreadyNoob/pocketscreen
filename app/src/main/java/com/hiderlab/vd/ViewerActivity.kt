@@ -46,7 +46,7 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private var edgeStartX = 0f
     private var edgeStartY = 0f
     private var edgeFromLeft = false
-    private var pkgOnDisplay: String? = null
+    private var appOnDisplay: AppRef? = null
     private var lastSub = ""
     private lateinit var box: FrameLayout
     private lateinit var titleView: TextView
@@ -422,27 +422,28 @@ class ViewerActivity : Activity(), SurfaceHolder.Callback, InputSink {
     private fun loadAppName() {
         val id = displayId
         Thread {
-            val names = Vd.tasks(id).map { p ->
-                try {
-                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(p.second, 0)).toString()
-                } catch (_: Throwable) { p.second }
-            }.distinct()
-            val pkg = Vd.tasks(id).firstOrNull()?.second
+            // One call, so the title and the settings come from the same view of the display.
+            val tasks = Vd.tasks(id)
+            // Apps.label gives a clone its nickname; PackageManager can't see the clone.
+            val names = tasks.map { Apps.label(applicationContext, it.app) }.distinct()
+            val app = tasks.firstOrNull()?.app
             if (names.isNotEmpty()) ui.post { titleView.text = names.joinToString(", ") }
             // Keyboard and back-gesture choices can be set per app.
-            if (pkg != null) ui.post { applyPerApp(pkg) }
-            if (pkg != null && Debug.enabled(this)) {
-                // top-app = all cores, foreground = fewer; useful when the app stutters
-                Debug.write("viewer: $pkg scheduling:\n" + Vd.exec(
-                    "for p in \$(pidof $pkg); do echo pid=\$p cpuset=\$(cat /proc/\$p/cpuset) oom_adj=\$(cat /proc/\$p/oom_score_adj); done"))
+            if (app != null) ui.post { applyPerApp(app) }
+            if (app != null && Debug.enabled(this)) {
+                // top-app = all cores, foreground = fewer; useful when the app stutters. Only this copy's processes.
+                val pids = CloneSpace.processes({ Vd.exec(it) }, listOf(app.pkg))
+                    ?.filter { it.name == app.pkg && it.user == app.user }?.map { it.pid }.orEmpty()
+                Debug.write("viewer: ${app.key} scheduling:\n" + Vd.exec(
+                    "for p in ${pids.joinToString(" ")}; do echo pid=\$p cpuset=\$(cat /proc/\$p/cpuset) oom_adj=\$(cat /proc/\$p/oom_score_adj); done"))
             }
         }.start()
     }
 
-    private fun applyPerApp(pkg: String) {
-        pkgOnDisplay = pkg
-        backControls = AppSettings.effectiveBackGesture(this, pkg)
-        suppressKb = AppSettings.effectiveSuppressKeyboard(this, pkg)
+    private fun applyPerApp(app: AppRef) {
+        appOnDisplay = app
+        backControls = AppSettings.effectiveBackGesture(this, app)
+        suppressKb = AppSettings.effectiveSuppressKeyboard(this, app)
         if (::sv.isInitialized) {
             sv.editorAllowed = !suppressKb || kbVisible
         }

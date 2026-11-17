@@ -91,17 +91,31 @@ object Apps {
         }
     }
 
-    /** Label for a package, from the loaded list when possible. */
-    fun label(ctx: Context, pkg: String): String =
+    /**
+     * Name to show for an app. A clone shows its nickname (PackageManager can't see the clone, so the nickname
+     * and the app's own name come from the clone's saved record). An original shows its own name, from the loaded
+     * list when possible.
+     */
+    fun label(ctx: Context, app: AppRef): String {
+        if (app.isClone) {
+            val c = Clones.find(ctx, app)
+            return c?.nickname?.ifBlank { null } ?: c?.label?.let { "$it (clone)" } ?: "${ownLabel(ctx, app.pkg)} (clone)"
+        }
+        return ownLabel(ctx, app.pkg)
+    }
+
+    /** The app's own name, ignoring any clone nickname. */
+    private fun ownLabel(ctx: Context, pkg: String): String =
         list.firstOrNull { it.pkg == pkg }?.label ?: try {
             val pm = ctx.packageManager
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-        } catch (_: Throwable) { pkg }
+        } catch (_: Throwable) { Clones.forPkg(ctx, pkg)?.label ?: pkg }
 
     /**
      * Returns the icon if it is already cached. Otherwise returns null and loads it in the
      * background; [onReady] then runs on the main thread. Check that the view still wants this
-     * package before using the result, because list rows get recycled.
+     * package before using the result, because list rows get recycled. A clone has the same icon
+     * as its original, so icons are looked up by package name only.
      */
     fun icon(ctx: Context, pkg: String, onReady: ((Bitmap) -> Unit)?): Bitmap? {
         icons.get(pkg)?.let { return it }

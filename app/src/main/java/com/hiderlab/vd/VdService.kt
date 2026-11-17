@@ -266,29 +266,25 @@ class VdService : IVdService.Stub() {
 
     // ---- task listing ----
 
-    private fun isRunning(pkg: String): Boolean = try {
-        val p = ProcessBuilder("sh", "-c", "pidof $pkg").redirectErrorStream(true).start()
-        val o = p.inputStream.bufferedReader().readText().trim()
-        p.waitFor()
-        o.isNotEmpty() && o.all { it.isDigit() || it == ' ' }
-    } catch (_: Throwable) { true }
-
+    /**
+     * The standard tasks on [displayId], one per line: `taskId|package|user|rule`. [user] is the Android user
+     * the task belongs to and [rule] says how that was worked out (see [CloneSpace.parseTasks]). A task that
+     * isn't the owner's gets a fifth column with the raw Task line (any `|` replaced), because this process
+     * can't write the app's log; the app logs the first few.
+     * Android keeps a task listed for a while after its app is killed, so a task whose process (same package,
+     * same user) is gone is left out. If the processes can't be read, nothing is left out.
+     */
     override fun tasksOn(displayId: Int): String = try {
         val p = ProcessBuilder("sh", "-c", "dumpsys activity activities").redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText()
         p.waitFor()
-        val dispRe = Regex("^Display #(\\d+)")
-        val taskRe = Regex("^\\s*\\* Task\\{\\w+ #(\\d+) type=standard A=\\d+:([\\w.]+)")
-        var cur = -1
-        val res = LinkedHashMap<Int, String>()
-        for (line in out.lineSequence()) {
-            val m = dispRe.find(line)
-            if (m != null) cur = m.groupValues[1].toInt()
-            else if (line.isNotEmpty() && !line[0].isWhitespace()) cur = -1 // a new top-level section (recents etc.)
-            if (cur == displayId) taskRe.find(line)?.let { res.putIfAbsent(it.groupValues[1].toInt(), it.groupValues[2]) }
-        }
-        // Android keeps a task listed for a while after its app is killed; hide those.
-        res.entries.filter { isRunning(it.value) }.joinToString("\n") { "${it.key}|${it.value}" }
+        val tasks = CloneSpace.parseTasks(out, displayId)
+        val procs = CloneSpace.processes({ run(it) }, tasks.map { it.pkg })
+        tasks.filter { t -> procs == null || procs.any { it.name == t.pkg && it.user == t.user } }
+            .joinToString("\n") { t ->
+                val base = "${t.id}|${t.pkg}|${t.user}|${t.rule}"
+                if (t.user == 0) base else base + "|" + t.raw.trim().replace('|', '/').take(300)
+            }
     } catch (t: Throwable) {
         "ERR: $t"
     }

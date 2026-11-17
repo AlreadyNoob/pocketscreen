@@ -23,13 +23,16 @@ class HostService : Service() {
 
     companion object {
         const val ACTION_STOP_ALL = "com.hiderlab.vd.STOP_ALL"
-        /** The app that was just confirmed running: counted in the first notification. */
+        /** The [AppRef.key] of the app that was just confirmed running: counted in the first notification. */
         const val EXTRA_PKG = "pkg"
         private const val CHANNEL = "hidden_display"
         private const val ALERT_CHANNEL = "app_alerts"
 
-        fun cancelCrash(ctx: android.content.Context, pkg: String) {
-            try { ctx.getSystemService(NotificationManager::class.java).cancel(pkg.hashCode()) } catch (_: Throwable) {}
+        /** The notification id of an app's crash alert. The owner's copy keeps the id it always had (the package's hash). */
+        private fun crashId(app: AppRef): Int = app.key.hashCode()
+
+        fun cancelCrash(ctx: android.content.Context, app: AppRef) {
+            try { ctx.getSystemService(NotificationManager::class.java).cancel(crashId(app)) } catch (_: Throwable) {}
         }
 
         /** Tells the user an app closed unexpectedly. Silently skipped if notifications are not allowed. */
@@ -43,12 +46,12 @@ class HostService : Service() {
                 )
                 val n = Notification.Builder(ctx, ALERT_CHANNEL)
                     .setSmallIcon(android.R.drawable.stat_notify_error)
-                    .setContentTitle("${Apps.label(ctx, c.pkg)} closed unexpectedly")
+                    .setContentTitle("${Apps.label(ctx, c.app)} closed unexpectedly")
                     .setContentText("Tap to open PocketScreen and relaunch it.")
                     .setContentIntent(open)
                     .setAutoCancel(true)
                     .build()
-                nm.notify(c.pkg.hashCode(), n)
+                nm.notify(crashId(c.app), n)
             } catch (_: Throwable) {}
         }
     }
@@ -63,7 +66,7 @@ class HostService : Service() {
     @Volatile private var lastPctAt = 0L
     @Volatile private var drainPerHour = 0f
     /** Apps found on the hidden displays by the last scan. The battery receiver reuses it instead of scanning again. */
-    @Volatile private var cachedApps: List<String> = emptyList()
+    @Volatile private var cachedApps: List<AppRef> = emptyList()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -221,9 +224,9 @@ class HostService : Service() {
         var best = 10 * 60_000L
         var anyTemp = false
         var batEta = Long.MAX_VALUE
-        for (pkg in cachedApps) {
-            if (AppSettings.effectiveTemp(ctx, pkg) > 0) anyTemp = true
-            val lim = AppSettings.effectiveBattery(ctx, pkg)
+        for (app in cachedApps) {
+            if (AppSettings.effectiveTemp(ctx, app) > 0) anyTemp = true
+            val lim = AppSettings.effectiveBattery(ctx, app)
             if (lim > 0 && lastPct > lim && drainPerHour > 0.05f) {
                 val eta = ((lastPct - lim) / drainPerHour * 3_600_000L).toLong()
                 if (eta < batEta) batEta = eta
@@ -253,15 +256,15 @@ class HostService : Service() {
      */
     private fun nextTimeLimitAt(ctx: Context, checkedAt: Long): Long {
         var next = Long.MAX_VALUE
-        for (pkg in cachedApps) {
-            val mins = AppSettings.effectiveMinutes(ctx, pkg)
-            val start = Vd.sessionStart(ctx, pkg)
+        for (app in cachedApps) {
+            val mins = AppSettings.effectiveMinutes(ctx, app)
+            val start = Vd.sessionStart(ctx, app)
             if (mins <= 0 || start == null) continue
             val at = start + mins * 60_000L + 250L // a moment after the minute is reached
             if (at > checkedAt && at < next) next = at
         }
-        for (pkg in cachedApps) {
-            val at = Vd.deadline(ctx, pkg) ?: continue // a clock limit
+        for (app in cachedApps) {
+            val at = Vd.deadline(ctx, app) ?: continue // a clock limit
             if (at > checkedAt && at < next) next = at
         }
         return next
@@ -269,11 +272,11 @@ class HostService : Service() {
 
     private val changeListener = Runnable { Thread { refreshNotification() }.start() }
 
-    /** Apps currently running on the hidden displays. One task listing per display. */
-    private fun scanApps(): List<String> =
-        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct()
+    /** Apps currently running on the hidden displays. One task listing per display. An original and its clone count separately. */
+    private fun scanApps(): List<AppRef> =
+        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.app } }.distinct()
 
-    private fun statusText(apps: List<String>): String = when (apps.size) {
+    private fun statusText(apps: List<AppRef>): String = when (apps.size) {
         0 -> "No apps running"
         1 -> "1 app running in the background"
         else -> "${apps.size} apps running in the background"
@@ -291,16 +294,16 @@ class HostService : Service() {
     }
 
     /** Remembers [apps] and rebuilds the ongoing notification if the set has changed. */
-    private fun showApps(apps: List<String>) {
+    private fun showApps(apps: List<AppRef>) {
         cachedApps = apps
         Thread { scheduleNext() }.start() // the plan depends on which apps are running
-        val sig = apps.sorted().toString()
+        val sig = apps.map { it.key }.sorted().toString()
         if (sig == lastSig) return
         lastSig = sig
         try { getSystemService(NotificationManager::class.java).notify(1, buildNotification(apps)) } catch (_: Throwable) {}
     }
 
-    private fun buildNotification(apps: List<String>): Notification {
+    private fun buildNotification(apps: List<AppRef>): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -369,7 +372,7 @@ class HostService : Service() {
         evaluateLimits(ctx, apps)
     }
 
-    private fun evaluateLimits(ctx: Context, apps: List<String>) {
+    private fun evaluateLimits(ctx: Context, apps: List<AppRef>) {
         val b = ctx.registerReceiver(null, IntentFilter(I2.ACTION_BATTERY_CHANGED))
         val level = b?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = b?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
@@ -383,12 +386,12 @@ class HostService : Service() {
 
         // Each app uses its own limits, or the defaults from Settings if it has none. Whatever trips,
         // the result is the same: the app is force-stopped and its display is removed.
-        for (pkg in apps) {
-            val tempLimit = AppSettings.effectiveTemp(ctx, pkg)
-            val batLimit = AppSettings.effectiveBattery(ctx, pkg)
-            val maxMin = AppSettings.effectiveMinutes(ctx, pkg)
-            val ran = Vd.sessionMinutes(ctx, pkg)
-            val clockAt = Vd.deadline(ctx, pkg)
+        for (app in apps) {
+            val tempLimit = AppSettings.effectiveTemp(ctx, app)
+            val batLimit = AppSettings.effectiveBattery(ctx, app)
+            val maxMin = AppSettings.effectiveMinutes(ctx, app)
+            val ran = Vd.sessionMinutes(ctx, app)
+            val clockAt = Vd.deadline(ctx, app)
             // kind is what the user sees as the reason, detail has the numbers.
             var kind = ""
             var detail = ""
@@ -406,20 +409,19 @@ class HostService : Service() {
                     "ran ${ran}m >= ${maxMin}m"
                 }
                 clockAt != null && System.currentTimeMillis() >= clockAt -> {
-                    kind = "Time of day"; detail = "Set for ${Vd.clockText(ctx, AppSettings.effectiveAt(ctx, pkg) - 1)}"
+                    kind = "Time of day"; detail = "Set for ${Vd.clockText(ctx, AppSettings.effectiveAt(ctx, app) - 1)}"
                     "clock limit reached"
                 }
                 else -> null
             } ?: continue
             // The scan can be a moment old: don't act on an app that has quit since.
-            val pid = Vd.exec("pidof $pkg").trim()
-            if (!pid.startsWith("ERR") && pid.firstOrNull()?.isDigit() != true) {
-                Debug.write("Auto-stop skipped: $pkg is no longer running ($reason)")
+            if (Vd.isRunning(app) == false) {
+                Debug.write("Auto-stop skipped: ${app.key} is no longer running ($reason)")
                 continue
             }
-            Debug.write("Auto-stop: $pkg, $reason")
-            Vd.recordAutoStop(ctx, pkg, kind, detail) // before the stop: it clears the session start
-            Vd.stopAppAndDisplay(ctx, pkg)
+            Debug.write("Auto-stop: ${app.key}, $reason")
+            Vd.recordAutoStop(ctx, app, kind, detail) // before the stop: it clears the session start
+            Vd.stopAppAndDisplay(ctx, app)
         }
     }
 
@@ -436,9 +438,9 @@ class HostService : Service() {
         // No binder calls on the main thread: show a placeholder now, the background refresh fills in the count.
         lastSig = ""
         // Count what we already know: the apps from the last count plus the one that was just started.
-        val first = (cachedApps + listOfNotNull(intent?.getStringExtra(EXTRA_PKG))).distinct()
+        val first = (cachedApps + listOfNotNull(intent?.getStringExtra(EXTRA_PKG)?.let { AppRef.fromKey(it) })).distinct()
         cachedApps = first
-        lastSig = first.sorted().toString()
+        lastSig = first.map { it.key }.sorted().toString()
         val n = buildNotification(first)
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)

@@ -2,7 +2,10 @@ package com.hiderlab.vd
 
 import android.content.Context
 
-/** User preferences that are plain on/off switches. */
+/**
+ * User preferences that are plain on/off switches. The per-app ones are stored under [AppRef.key], so a
+ * clone has its own settings and the original keeps the keys it always had.
+ */
 object AppSettings {
     private fun p(c: Context) = c.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -15,14 +18,14 @@ object AppSettings {
     fun setBackGesture(c: Context, on: Boolean) { p(c).edit().putBoolean("back_gesture", on).apply() }
 
     /** Per-app overrides for the two viewer options above. -1 = use the Settings value, 0 = off, 1 = on. */
-    fun appBackGesture(c: Context, pkg: String): Int = p(c).getInt("back_$pkg", -1)
-    fun setAppBackGesture(c: Context, pkg: String, v: Int) { p(c).edit().putInt("back_$pkg", v).apply() }
-    fun appSuppressKeyboard(c: Context, pkg: String): Int = p(c).getInt("kb_$pkg", -1)
-    fun setAppSuppressKeyboard(c: Context, pkg: String, v: Int) { p(c).edit().putInt("kb_$pkg", v).apply() }
-    fun effectiveBackGesture(c: Context, pkg: String): Boolean =
-        appBackGesture(c, pkg).let { if (it < 0) backGesture(c) else it == 1 }
-    fun effectiveSuppressKeyboard(c: Context, pkg: String): Boolean =
-        appSuppressKeyboard(c, pkg).let { if (it < 0) suppressKeyboard(c) else it == 1 }
+    fun appBackGesture(c: Context, app: AppRef): Int = p(c).getInt("back_${app.key}", -1)
+    fun setAppBackGesture(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("back_${app.key}", v).apply() }
+    fun appSuppressKeyboard(c: Context, app: AppRef): Int = p(c).getInt("kb_${app.key}", -1)
+    fun setAppSuppressKeyboard(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("kb_${app.key}", v).apply() }
+    fun effectiveBackGesture(c: Context, app: AppRef): Boolean =
+        appBackGesture(c, app).let { if (it < 0) backGesture(c) else it == 1 }
+    fun effectiveSuppressKeyboard(c: Context, app: AppRef): Boolean =
+        appSuppressKeyboard(c, app).let { if (it < 0) suppressKeyboard(c) else it == 1 }
 
     /** Launch apps with "exclude from Recents" so they don't show there while on a hidden display. On by default. */
     fun hideFromRecents(c: Context): Boolean = p(c).getBoolean("hide_recents", true)
@@ -52,32 +55,32 @@ object AppSettings {
     fun setShowStats(c: Context, on: Boolean) { p(c).edit().putBoolean("show_stats", on).apply() }
 
     /** Per-app auto-stop. -1 means "use the default from Settings", 0 means off. */
-    fun appBattery(c: Context, pkg: String): Int = p(c).getInt("auto_bat_$pkg", -1)
-    fun setAppBattery(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_bat_$pkg", v).apply() }
-    fun appTemp(c: Context, pkg: String): Int = p(c).getInt("auto_temp_$pkg", -1)
-    fun setAppTemp(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_temp_$pkg", v).apply() }
-    fun appMinutes(c: Context, pkg: String): Int = p(c).getInt("auto_min_$pkg", -1)
-    fun setAppMinutes(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_min_$pkg", v).apply() }
+    fun appBattery(c: Context, app: AppRef): Int = p(c).getInt("auto_bat_${app.key}", -1)
+    fun setAppBattery(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("auto_bat_${app.key}", v).apply() }
+    fun appTemp(c: Context, app: AppRef): Int = p(c).getInt("auto_temp_${app.key}", -1)
+    fun setAppTemp(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("auto_temp_${app.key}", v).apply() }
+    fun appMinutes(c: Context, app: AppRef): Int = p(c).getInt("auto_min_${app.key}", -1)
+    fun setAppMinutes(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("auto_min_${app.key}", v).apply() }
 
-    fun appAt(c: Context, pkg: String): Int = p(c).getInt("auto_at_$pkg", -1)
-    fun setAppAt(c: Context, pkg: String, v: Int) { p(c).edit().putInt("auto_at_$pkg", v).apply() }
-    fun effectiveAt(c: Context, pkg: String): Int = appAt(c, pkg).let { if (it < 0) autoStopAt(c) else it }
+    fun appAt(c: Context, app: AppRef): Int = p(c).getInt("auto_at_${app.key}", -1)
+    fun setAppAt(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("auto_at_${app.key}", v).apply() }
+    fun effectiveAt(c: Context, app: AppRef): Int = appAt(c, app).let { if (it < 0) autoStopAt(c) else it }
 
-    fun effectiveBattery(c: Context, pkg: String): Int = appBattery(c, pkg).let { if (it < 0) autoStopBattery(c) else it }
-    fun effectiveTemp(c: Context, pkg: String): Int = appTemp(c, pkg).let { if (it < 0) autoStopTemp(c) else it }
-    fun effectiveMinutes(c: Context, pkg: String): Int = appMinutes(c, pkg).let { if (it < 0) autoStopMinutes(c) else it }
+    fun effectiveBattery(c: Context, app: AppRef): Int = appBattery(c, app).let { if (it < 0) autoStopBattery(c) else it }
+    fun effectiveTemp(c: Context, app: AppRef): Int = appTemp(c, app).let { if (it < 0) autoStopTemp(c) else it }
+    fun effectiveMinutes(c: Context, app: AppRef): Int = appMinutes(c, app).let { if (it < 0) autoStopMinutes(c) else it }
 
     /** Refresh rate of new hidden displays, in Hz. 0 = the phone's own rate. */
     const val MAX_HZ = 144
     fun refreshRate(c: Context): Int = p(c).getInt("refresh_hz", 0)
     fun setRefreshRate(c: Context, v: Int) { p(c).edit().putInt("refresh_hz", v).apply() }
     /** Per-app rate. -1 = use the Settings value, 0 = the phone's own rate. */
-    fun appRefreshRate(c: Context, pkg: String): Int = p(c).getInt("hz_$pkg", -1)
-    fun setAppRefreshRate(c: Context, pkg: String, v: Int) { p(c).edit().putInt("hz_$pkg", v).apply() }
-    fun effectiveRefreshRate(c: Context, pkg: String): Int =
-        appRefreshRate(c, pkg).let { if (it < 0) refreshRate(c) else it }.coerceIn(0, MAX_HZ)
+    fun appRefreshRate(c: Context, app: AppRef): Int = p(c).getInt("hz_${app.key}", -1)
+    fun setAppRefreshRate(c: Context, app: AppRef, v: Int) { p(c).edit().putInt("hz_${app.key}", v).apply() }
+    fun effectiveRefreshRate(c: Context, app: AppRef): Int =
+        appRefreshRate(c, app).let { if (it < 0) refreshRate(c) else it }.coerceIn(0, MAX_HZ)
 
     /** Per app: pause the app while the screen is off and resume it when the screen comes on. Off by default. */
-    fun freezeWhenOff(c: Context, pkg: String): Boolean = p(c).getBoolean("freeze_off_$pkg", false)
-    fun setFreezeWhenOff(c: Context, pkg: String, on: Boolean) { p(c).edit().putBoolean("freeze_off_$pkg", on).apply() }
+    fun freezeWhenOff(c: Context, app: AppRef): Boolean = p(c).getBoolean("freeze_off_${app.key}", false)
+    fun setFreezeWhenOff(c: Context, app: AppRef, on: Boolean) { p(c).edit().putBoolean("freeze_off_${app.key}", on).apply() }
 }

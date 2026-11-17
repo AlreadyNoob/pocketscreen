@@ -14,7 +14,8 @@ interface IVdService {
     String clearSurface(int id) = 7;
     oneway void touch(int id, int action, float x, float y) = 8;
     oneway void key(int id, int keyCode, int meta) = 9;
-    // lines of "taskId|package" for standard tasks on a display
+    // lines of "taskId|package|user|rule[|raw task line]" for standard tasks on a display; the older
+    // two-column form "taskId|package" is still understood by the app
     String tasksOn(int displayId) = 10;
     int rotation(int id) = 11;
     // one raw key event (action = KeyEvent.ACTION_DOWN/UP) into the display
