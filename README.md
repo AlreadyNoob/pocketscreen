@@ -95,7 +95,7 @@ The debug build is signed with `app/hiderlab.jks`, a key that is committed to th
 - It depends on hidden Android behavior, so it may not work the same on every phone or Android version.
 - Memory and CPU are read from `dumpsys`, whose output differs between devices. A value that cannot be read is simply left out.
 - Auto-stop only knows about apps PocketScreen launched, and it needs Shizuku and the service to be connected.
-- Checks run every 30 seconds, so a stop can be up to 30 seconds late.
+- Checks run every 30 seconds while the screen is on. With the screen off they run every 2 to 10 minutes, depending on the limits and how fast the battery is draining, so a stop can be that late. To keep checking all night, PocketScreen asks Android (through Shizuku) to leave it out of Doze and background limits.
 
 ## License
 

@@ -64,6 +64,11 @@ class HostService : Service() {
     @Volatile private var drainPerHour = 0f
     /** Apps found on the hidden displays by the last scan. The battery receiver reuses it instead of scanning again. */
     @Volatile private var cachedApps: List<String> = emptyList()
+    /** Apps the limits apply to: the displays' apps plus any app we started that is still running. */
+    @Volatile private var limitApps: List<String> = emptyList()
+    private fun watched(): List<String> = (cachedApps + limitApps).distinct()
+    @Volatile private var exempted = false
+    private var exemptTries = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -184,12 +189,23 @@ class HostService : Service() {
                 lastPass = System.currentTimeMillis()
                 Debug.write("check run (screen ${if (pm.isInteractive) "on" else "off"})")
                 screenState(!pm.isInteractive, "check pass")
+                // The part that matters most goes first and is quick: if a limit is already crossed, stop the app
+                // now. The slow scan below can stall while the phone dozes, and must not be what delays a stop.
+                if (Vd.service != null) checkLimits(ctx, fresh = false)
+                ensureExempt(ctx)
                 checkLimits(ctx, fresh = true)
             } finally {
                 try { if (wl.isHeld) wl.release() } catch (_: Throwable) {}
                 scheduleNext()
             }
         }.start()
+    }
+
+    /** Asks Android not to doze PocketScreen (see [Vd.exemptFromDoze]). Retried a few times if it didn't take. */
+    private fun ensureExempt(ctx: Context) {
+        if (exempted || exemptTries >= 5 || Vd.service == null) return
+        exemptTries++
+        exempted = try { Vd.exemptFromDoze(ctx) } catch (_: Throwable) { false }
     }
 
     /** Sets the next alarm. Safe to call at any time: it replaces the one already set. */
@@ -219,9 +235,10 @@ class HostService : Service() {
         val pm = getSystemService(PowerManager::class.java)
         if (pm == null || pm.isInteractive) return 30_000L
         var best = 10 * 60_000L
+        if (Vd.service == null) best = 2 * 60_000L // not connected: look again soon
         var anyTemp = false
         var batEta = Long.MAX_VALUE
-        for (pkg in cachedApps) {
+        for (pkg in watched()) {
             if (AppSettings.effectiveTemp(ctx, pkg) > 0) anyTemp = true
             val lim = AppSettings.effectiveBattery(ctx, pkg)
             if (lim > 0 && lastPct > lim && drainPerHour > 0.05f) {
@@ -253,14 +270,14 @@ class HostService : Service() {
      */
     private fun nextTimeLimitAt(ctx: Context, checkedAt: Long): Long {
         var next = Long.MAX_VALUE
-        for (pkg in cachedApps) {
+        for (pkg in watched()) {
             val mins = AppSettings.effectiveMinutes(ctx, pkg)
             val start = Vd.sessionStart(ctx, pkg)
             if (mins <= 0 || start == null) continue
             val at = start + mins * 60_000L + 250L // a moment after the minute is reached
             if (at > checkedAt && at < next) next = at
         }
-        for (pkg in cachedApps) {
+        for (pkg in watched()) {
             val at = Vd.deadline(ctx, pkg) ?: continue // a clock limit
             if (at > checkedAt && at < next) next = at
         }
@@ -271,7 +288,7 @@ class HostService : Service() {
 
     /** Apps currently running on the hidden displays. One task listing per display. */
     private fun scanApps(): List<String> =
-        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct()
+        Vd.displays.toList().flatMap { d -> Vd.tasks(d.id).map { it.second } }.distinct().filter { it != packageName }
 
     private fun statusText(apps: List<String>): String = when (apps.size) {
         0 -> "No apps running"
@@ -343,7 +360,7 @@ class HostService : Service() {
         try {
             lastCheck = System.currentTimeMillis()
             if (fresh) doFullPass(ctx) else {
-                val apps = cachedApps
+                val apps = watched()
                 if (apps.isNotEmpty()) evaluateLimits(ctx, apps)
             }
         } catch (t: Throwable) {
@@ -355,7 +372,8 @@ class HostService : Service() {
     }
 
     private fun doFullPass(ctx: Context) {
-        if (Vd.service == null) { Vd.connect(ctx); showApps(emptyList()); return }
+        // Not connected (Shizuku restarted, say): reconnect and carry on in this pass, instead of waiting for the next one.
+        if (!Vd.awaitService(ctx, 8_000L)) { showApps(emptyList()); return }
         Vd.refreshInfo()
         // One scan serves the notification, the crash check and the limits.
         val apps = scanApps()
@@ -365,8 +383,12 @@ class HostService : Service() {
         try {
             for (c in Vd.checkCrashes(ctx, apps.toSet(), emptySet())) notifyCrash(ctx, c)
         } catch (t: Throwable) { Debug.write("crash check: $t") }
-        if (Vd.displays.isEmpty()) return
-        evaluateLimits(ctx, apps)
+        // The limits also cover an app we started that the scan missed (a slow or failed dumpsys, a display list
+        // that didn't load): a limit must not depend on the scan having worked.
+        val targets = (apps + try { Vd.liveSessionPkgs(ctx) } catch (_: Throwable) { emptyList() }).distinct()
+        limitApps = targets
+        if (targets.isEmpty()) return
+        evaluateLimits(ctx, targets)
     }
 
     private fun evaluateLimits(ctx: Context, apps: List<String>) {

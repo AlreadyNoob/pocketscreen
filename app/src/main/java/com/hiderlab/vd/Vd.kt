@@ -28,6 +28,7 @@ object Vd {
     @Volatile var displays: List<Disp> = emptyList()
     @Volatile var inputError = ""
     @Volatile private var binding = false
+    @Volatile private var bindStarted = 0L
 
     val listeners = CopyOnWriteArrayList<Runnable>()
     @Volatile var logSink: ((String) -> Unit)? = null
@@ -57,8 +58,11 @@ object Vd {
     @Suppress("DEPRECATION")
     fun connect(ctx: Context, force: Boolean = false) {
         if (force) binding = false
+        // A bind that Shizuku never answered must not block every later attempt for good.
+        if (binding && System.currentTimeMillis() - bindStarted > 15_000L) binding = false
         if (service != null || binding || !permitted()) return
         binding = true
+        bindStarted = System.currentTimeMillis()
         val code = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionCode
         val args = Shizuku.UserServiceArgs(ComponentName(ctx.packageName, VdService::class.java.name))
             .daemon(true)
@@ -67,6 +71,43 @@ object Vd {
         Shizuku.bindUserService(args, conn)
         log("Connecting...")
     }
+
+    /** Connects if needed and waits up to [ms] for the service. False when Shizuku isn't usable or didn't answer. */
+    fun awaitService(ctx: Context, ms: Long): Boolean {
+        if (service != null) return true
+        if (!permitted()) return false
+        val end = System.currentTimeMillis() + ms
+        while (service == null && System.currentTimeMillis() < end) {
+            connect(ctx)
+            try { Thread.sleep(250) } catch (_: InterruptedException) { break }
+        }
+        return service != null
+    }
+
+    private fun onDozeAllowlist(pkg: String): Boolean =
+        exec("cmd deviceidle whitelist").lines().any { it.trim().split(",").getOrNull(1) == pkg }
+
+    /**
+     * Keeps Android from putting PocketScreen to sleep. The limit checks have to keep running all night, but
+     * in Doze (screen off, phone still) Android ignores wake locks and holds alarms back, so a check could
+     * start and then stall until the phone was picked up. An app on the Doze allowlist is not held back.
+     * Needs only Shizuku, so there is nothing to set up by hand. True once the allowlist shows the app.
+     */
+    fun exemptFromDoze(ctx: Context): Boolean {
+        val me = ctx.packageName
+        if (!Regex("[A-Za-z0-9_.]+").matches(me)) return false
+        if (!onDozeAllowlist(me)) exec("cmd deviceidle whitelist +$me")
+        exec("cmd appops set $me RUN_ANY_IN_BACKGROUND allow")
+        exec("cmd appops set $me RUN_IN_BACKGROUND allow")
+        exec("am set-standby-bucket $me active")
+        val ok = onDozeAllowlist(me)
+        log("Doze allowlist: ${if (ok) "on" else "not on"}")
+        return ok
+    }
+
+    /** Apps PocketScreen started that are still running, whether or not a scan of the displays shows them. */
+    fun liveSessionPkgs(ctx: Context): List<String> =
+        sessionPrefs(ctx).all.filter { it.value is Long }.keys.filter { exec("pidof $it").trim().firstOrNull()?.isDigit() == true }
 
     fun display(id: Int): Disp? = displays.firstOrNull { it.id == id }
 
@@ -170,7 +211,9 @@ object Vd {
                 Thread.sleep(100); tries++
                 if (tries == 15) r = exec("am force-stop $pkg") // still there after 1.5 s: ask again
             }
-            if (tasks(id).none { it.second != pkg }) releaseOnly(ctx, id)
+            // Our own black screen (see ParkActivity) is not another app: without this, an app stopped while
+            // paused would leave its display behind.
+            if (tasks(id).none { it.second != pkg && it.second != ctx.packageName }) { ParkActivity.finishAll(); releaseOnly(ctx, id) }
         }
         return r
     }
